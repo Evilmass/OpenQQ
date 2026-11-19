@@ -48,7 +48,8 @@ export function convertSegment(element, replyId, forward, mediaUrl) {
   }
   if (element.elementType === 7 && element.replyElement) {
     const value = element.replyElement;
-    const original = value.sourceMsgIdInRecords || value.replayMsgId;
+    // openqq.msgId is the quoted message as the native side found it in QQ's records; the ids QQ wrote into the element come second.
+    const original = value.openqq?.msgId || value.sourceMsgIdInRecords || value.replayMsgId;
     if (/^\d+$/.test(String(original)) && String(original) !== '0' && (typeof original !== 'number' || Number.isSafeInteger(original))) {
       return { type: 'reply', data: { id: String(replyId(original)) } };
     }

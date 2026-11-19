@@ -56,7 +56,8 @@ function segmentsOf(params) {
 function normalizeParams(request) {
   const params = request?.params;
   if (!sendActions.includes(request?.action) || !params || typeof params !== 'object' || Array.isArray(params)) return request;
-  if (typeof params.message !== 'string' || params.auto_escape !== undefined) return request;
+  // auto_escape: false means the same as leaving it out, so the CQ string is still parsed (and its media prepared); other values stay for validation.
+  if (typeof params.message !== 'string' || (params.auto_escape !== undefined && params.auto_escape !== false)) return request;
   return { ...request, params: { ...params, message: parseCQ(params.message) } };
 }
 
@@ -123,6 +124,11 @@ function validateAction(request) {
     const ref = nativeRef(params.openqq_ref, true);
     if (!ref) throw fail('合并转发 id 无效或已过期（仅支持本次运行期间收到的消息）', 1404);
     return { kind: 'forward', ref };
+  }
+  if (request.action === 'get_msg') {
+    const ref = nativeRef(params.openqq_ref);
+    if (!ref) throw fail('message_id 不存在或已过期（仅支持本次运行期间收发过或被引用的消息）', 1404);
+    return { kind: 'get_msg', ref };
   }
   if (request.action === 'get_image') {
     const raw = params.file ?? params.file_id;
@@ -224,6 +230,12 @@ function createActionHandler(session, self, current, options = {}) {
           ensure();
           return { self, forward: { ref: action.ref, messages } };
         }
+        if (action.kind === 'get_msg') {
+          if (typeof options.fetchMessage !== 'function') throw fail('当前会话不支持读取消息', 1500);
+          const message = await options.fetchMessage(action.ref);
+          ensure();
+          return { self, message };
+        }
         if (action.kind === 'get_image') {
           if (typeof options.resolveMedia !== 'function') throw fail('当前会话不支持获取图片', 1500);
           const media = await options.resolveMedia(action.key, 'image');
@@ -233,6 +245,12 @@ function createActionHandler(session, self, current, options = {}) {
         if (admin.kinds.has(action.kind)) {
           return await admin.run(action, {
             session, ensure, groupList,
+            friendList: async () => {
+              if (typeof options.friendList !== 'function') throw fail('当前会话不支持获取好友列表', 1500);
+              const list = await options.friendList();
+              ensure();
+              return list;
+            },
             uidFor: uin => needUid(uin, ['convert', 'profile', 'group'], '无法把 QQ 号转换为 UID；未调用 QQ'),
             memberUid: (_group, uin) => needUid(uin, ['group', 'convert', 'profile'], '无法把 QQ 号转换为 UID；未调用 QQ'),
           });

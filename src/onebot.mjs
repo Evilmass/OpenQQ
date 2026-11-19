@@ -8,11 +8,17 @@ function integer(value, field, min = 0) {
 }
 const id = (value, field) => integer(value, field, 1);
 
-export function createEventConverter({ mediaUrl } = {}) {
+// `idStore` (src/idstore.mjs) keeps the id mapping across restarts; without one the ids start again from 1.
+export function createEventConverter({ mediaUrl, idStore } = {}) {
   const ids = new Map();
   const refs = new Map();
   const seen = new Map();
   let nextId = 1;
+  if (idStore) {
+    const saved = idStore.load();
+    nextId = saved.nextId;
+    for (const [key, id, ref] of saved.entries) { ids.set(key, id); if (ref) refs.set(id, ref); }
+  }
   const keyOf = (selfId, message, nativeId = message.msgId) => {
     if (!/^\d+$/.test(String(nativeId)) || (typeof nativeId === 'number' && !Number.isSafeInteger(nativeId))) {
       throw new Error('原生消息标识无效或已丢失精度');
@@ -25,8 +31,9 @@ export function createEventConverter({ mediaUrl } = {}) {
       ids.set(key, nextId);
       if (ref) refs.set(nextId, ref);
       nextId++;
+      idStore?.schedule(() => ({ nextId, entries: [...ids].map(([entryKey, id]) => [entryKey, id, refs.get(id)]) }));
     }
-    // Id mappings and dedup keys live in memory (10000 entries); they would need persisting before any history API.
+    // The mapping keeps the latest 10000 ids; older ones stop resolving (and are no longer written to the store).
     if (ids.size > 10000) {
       const [, oldest] = ids.entries().next().value;
       ids.delete(ids.keys().next().value);
@@ -125,11 +132,30 @@ export function createEventConverter({ mediaUrl } = {}) {
     }
     return result.event;
   };
+  // Writes the id mapping now (called on shutdown; otherwise it is written shortly after the last new id).
+  convert.flush = () => idStore?.flush();
   convert.messageId = (self, message) => messageRef(id(self.uin, 'self_id'), message);
   // OneBot id → native reference (message or forward) seen in this run, or undefined.
   convert.resolve = value => {
     if ((typeof value !== 'string' && typeof value !== 'number') || !/^[1-9]\d*$/.test(String(value))) return undefined;
     return refs.get(Number(value));
+  };
+  // get_msg: the segments a received message would carry, for any sender (including ourselves).
+  convert.messageResult = (self, message) => {
+    const selfId = id(self.uin, 'self_id');
+    if (![1, 2, 100].includes(message?.chatType)) throw new Error('原生消息的会话类型不受支持');
+    if (!Array.isArray(message.elements) || !message.elements.length) throw new Error('原生消息元素为空');
+    const segments = message.elements.map(element => convertSegment(element, original => messageRef(selfId, message, original),
+      ref => forwardSegment(selfId, ref), mediaUrl));
+    const senderId = /^[1-9]\d*$/.test(String(message.senderUin)) && Number.isSafeInteger(Number(message.senderUin)) ? Number(message.senderUin) : 0;
+    const messageId = messageRef(selfId, message);
+    const result = { time: id(message.msgTime, 'time'), message_type: message.chatType === 2 ? 'group' : 'private', message_id: messageId, real_id: messageId,
+      user_id: senderId, sender: { user_id: senderId, nickname: String(message.sendNickName ?? '') }, message: segments, raw_message: cqString(segments), font: 0 };
+    if (message.chatType === 2) {
+      result.group_id = id(message.peerUin ?? message.peerUid, 'group_id');
+      result.sender.card = String(message.sendMemberName ?? '');
+    }
+    return result;
   };
   convert.forwardResult = (self, forward) => {
     if (!forward?.ref || !Array.isArray(forward.messages)) throw new Error('合并转发回执无效');

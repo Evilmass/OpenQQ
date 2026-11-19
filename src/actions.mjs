@@ -27,6 +27,22 @@ async function formatImageResult(data, mediaUrl) {
   return { file, filename: fileName, file_name: fileName, size, file_size: size, url, ...(base64 ? { base64 } : {}) };
 }
 
+// Inline media (base64:// or a data: URI) can be megabytes. The WebUI keeps every action in a 2 MiB history and drops any entry larger
+// than that, and the terminal prints the request, so both get a copy where the payload is replaced by its size.
+const INLINE_MEDIA = /(base64:\/\/|data:[^;,\s]{1,100};base64,)[A-Za-z0-9+/=\s]{512,}/g;
+export function redactRequest(value, depth = 0) {
+  if (typeof value === 'string') return value.length > 512 ? value.replace(INLINE_MEDIA, (match, head) => `${head}[已省略 ${match.length - head.length} 字符]`) : value;
+  if (depth > 6 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(item => redactRequest(item, depth + 1));
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactRequest(item, depth + 1)]));
+}
+
+// get_image answers with the picture as plain base64.
+export function redactResponse(response) {
+  const base64 = response?.data?.base64;
+  return typeof base64 === 'string' && base64.length > 512 ? { ...response, data: { ...response.data, base64: `[已省略 ${base64.length} 字符]` } } : response;
+}
+
 // OneBot ids are local to this process; translate them into the native references QQ needs before validation.
 function resolveReferences(converter, request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) return request;
@@ -42,6 +58,11 @@ function resolveReferences(converter, request) {
   if (request.action === 'delete_msg') {
     const ref = converter.resolve(params.message_id);
     if (ref?.kind !== 'message') throw fail('message_id 不存在或已过期（仅支持本次运行期间收发过的消息）', 1404);
+    return { ...request, params: { ...params, openqq_ref: { chatType: ref.chatType, peerUid: ref.peerUid, msgId: ref.msgId } } };
+  }
+  if (request.action === 'get_msg' || request.action === 'set_msg_emoji_like') {
+    const ref = converter.resolve(params.message_id);
+    if (ref?.kind !== 'message') throw fail('message_id 不存在或已过期（仅支持本次运行期间收发过或被引用的消息）', 1404);
     return { ...request, params: { ...params, openqq_ref: { chatType: ref.chatType, peerUid: ref.peerUid, msgId: ref.msgId } } };
   }
   if (!sendActions.includes(request.action) || !Array.isArray(params.message)) return request;
@@ -71,6 +92,10 @@ export async function dispatchAction(channel, converter, request, options = {}) 
     const local = localAnswer(request, options);
     if (local !== undefined) {
       response = { status: 'ok', retcode: 0, data: local };
+    } else if (request?.action === 'clean_cache') {
+      // Only OpenQQ's own temporary media is cleaned, and only what an earlier run left behind (the same rule as at startup).
+      await options.media?.sweep();
+      response = { status: 'ok', retcode: 0, data: null };
     } else {
       let prepared = resolveReferences(converter, nativeActions.normalizeParams(request));
       if (options.media && sendActions.includes(prepared?.action) && prepared.params && typeof prepared.params === 'object') {
@@ -87,6 +112,9 @@ export async function dispatchAction(channel, converter, request, options = {}) 
       }
       if (response.status === 'ok' && action.kind === 'forward') {
         response = { status: 'ok', retcode: 0, data: converter.forwardResult(response.data.self, response.data.forward) };
+      }
+      if (response.status === 'ok' && action.kind === 'get_msg') {
+        response = { status: 'ok', retcode: 0, data: converter.messageResult(response.data.self, response.data.message) };
       }
       if (response.status === 'ok' && action.kind === 'get_image') {
         response = { status: 'ok', retcode: 0, data: await formatImageResult(response.data, options.mediaUrl) };

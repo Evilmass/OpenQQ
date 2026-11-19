@@ -429,7 +429,11 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
           const { openqq_media: ignored, ...data } = segment.data;
           if (!mediaTypes.has(segment.type)) { message.push({ ...segment, data }); continue; }
           if (++count > 20) throw fail('一条消息最多包含 20 个媒体段');
-          message.push({ ...segment, data: { ...data, openqq_media: await builders[segment.type](data, track) } });
+          const prepared = await builders[segment.type](data, track);
+          // The native side reads only openqq_media (and the image summary). Everything else the client sent, above all a base64:// source
+          // that can be megabytes, must not travel on in the IPC frame, which is capped at 1 MiB.
+          const summary = segment.type === 'image' && typeof data.summary === 'string' ? { summary: data.summary.slice(0, 64) } : {};
+          message.push({ ...segment, data: { ...summary, openqq_media: prepared } });
         }
         return { params: { ...params, message }, release };
       } catch (error) { await release(); throw error; }

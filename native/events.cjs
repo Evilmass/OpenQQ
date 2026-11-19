@@ -39,6 +39,8 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
   const members = new Map();
   const started = now();
   let friends;
+  // Names of the friends in the last full list QQ pushed, for get_friend_list.
+  let friendDetails;
   let syncing = true;
   // Groups QQ has told us about, for get_group_list / get_group_info. QQ answers a refresh through the group listener.
   const groups = { map: new Map(), version: 0 };
@@ -334,6 +336,60 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
   }
   const forwardSize = value => JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? String(item) : item).length;
 
+  // The id a reply segment should carry. The ids QQ writes into a reply element do not always name the quoted message in the local records
+  // (seen for a message the account sent itself), so the quote is looked up by its sequence number first, then by the ids in the element.
+  async function quotedMessageId(peer, reply) {
+    const service = session.getMsgService?.();
+    if (!service) return undefined;
+    const target = { chatType: peer.chatType, peerUid: peer.peerUid, guildId: '' };
+    const attempt = async call => {
+      let timer;
+      try { return await Promise.race([call(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), 3000); })]); }
+      catch { return undefined; }
+      finally { clearTimeout(timer); }
+    };
+    const seq = String(reply.replayMsgSeq ?? '');
+    if (/^[1-9]\d*$/.test(seq) && typeof service.getMsgsBySeqAndCount === 'function') {
+      const found = (await attempt(() => service.getMsgsBySeqAndCount(target, seq, 1, true, true)))?.msgList?.find(item => String(item?.msgSeq) === seq);
+      if (found && /^[1-9]\d*$/.test(String(found.msgId))) return String(found.msgId);
+    }
+    if (!current()) throw new Error('会话已失效');
+    if (typeof service.getMsgsByMsgId === 'function') for (const id of [reply.sourceMsgIdInRecords, reply.replayMsgId].map(value => String(value ?? ''))) {
+      if (!/^[1-9]\d*$/.test(id)) continue;
+      const found = (await attempt(() => service.getMsgsByMsgId(target, [id])))?.msgList?.find(item => String(item?.msgId) === id);
+      if (found) return id;
+    }
+    // Field names only, once: enough to see what the element carries when a quote cannot be matched.
+    native('msg', 'reply_unresolved', [reply]);
+    return undefined;
+  }
+
+  // get_msg: one message from QQ's local records, prepared like a received one but without downloading media
+  // (get_image does that on demand) and without expanding merged forwards (their id still works with get_forward_msg).
+  async function fetchMessage(ref) {
+    let timer;
+    let result;
+    try {
+      result = await Promise.race([
+        session.getMsgService().getMsgsByMsgId({ chatType: ref.chatType, peerUid: ref.peerUid, guildId: '' }, [ref.msgId]),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(fail('读取消息超时（8 秒）', 1500)), 8000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+    if (!current()) throw new Error('会话已失效');
+    if (result?.result !== undefined && result.result !== 0) throw fail(`QQ 拒绝读取消息：${result.errMsg || result.result}`, 1500);
+    const found = Array.isArray(result?.msgList) ? result.msgList.find(item => String(item?.msgId) === ref.msgId) : undefined;
+    if (!found) throw fail('消息在 QQ 本地记录中找不到', 1404);
+    if (!Array.isArray(found.elements) || !found.elements.length) throw fail('消息没有可读取的内容', 1404);
+    if (found.elements.some(element => element.elementType === 8)) throw fail('该消息已撤回，或是系统提示，没有可读取的内容', 1404);
+    remember(found.senderUid, found.senderUin);
+    let senderUin = '0';
+    // Like forwarded authors, a sender that cannot be resolved keeps the nickname with user_id 0 instead of failing the read.
+    try { senderUin = await uin(found.senderUid, found.senderUin); } catch (error) { if (!current()) throw error; }
+    const elements = await prepare(found.elements, { peer: { chatType: ref.chatType, peerUid: ref.peerUid }, root: ref.msgId,
+      depth: FORWARD_DEPTH, budget: { left: 0 }, skipDownload: true }, ref.msgId);
+    return { ...found, senderUin, elements };
+  }
+
   async function prepare(elements, ctx, msgId) {
     return Promise.all(elements.map(async element => {
       const text = element.textElement;
@@ -377,6 +433,10 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
         if (!resolved) resolved = await pickThumbPath(pic.thumbPath);
         rememberMedia(element, ctx, msgId, resolved || pic.sourcePath);
         return resolved ? { ...element, picElement: { ...pic, sourcePath: resolved } } : element;
+      }
+      if (element.elementType === 7 && element.replyElement) {
+        const quoted = await quotedMessageId(ctx.peer, element.replyElement);
+        return quoted ? { ...element, replyElement: { ...element.replyElement, openqq: { msgId: quoted } } } : element;
       }
       if ([3, 4, 5].includes(element.elementType)) rememberMedia(element, ctx, msgId);
       const forward = element.multiForwardMsgElement;
@@ -589,10 +649,13 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
       if (name === 'onBuddyListChange') {
         if (!Array.isArray(args[0]) || args[0].some(category => !Array.isArray(category.buddyList))) throw new Error('好友列表回调结构未适配');
         const next = new Map();
+        const details = new Map();
         for (const category of args[0] ?? []) for (const buddy of category.buddyList ?? []) {
           remember(buddy.uid, buddy.uin);
           next.set(buddy.uid, buddy.uin);
+          details.set(buddy.uid, { uin: buddy.uin, nick: String(buddy.nick ?? buddy.coreInfo?.nick ?? ''), remark: String(buddy.remark ?? buddy.coreInfo?.remark ?? '') });
         }
+        friendDetails = details;
         if (friends && !syncing) {
           for (const [uid, hint] of next) if (!friends.has(uid)) notice({ notice_type: 'friend_add', user_id: await uin(uid, hint) });
           for (const [uid, hint] of friends) if (!next.has(uid)) notice({ notice_type: 'friend_delete', user_id: await uin(uid, hint) });
@@ -604,8 +667,22 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
     }
     native(source, name, args);
   }
+  // get_friend_list: the list QQ last pushed with onBuddyListChange. Nothing is requested from QQ, so before the first push there is no answer.
+  async function friendList() {
+    if (!friendDetails) throw fail('好友列表尚未同步完成，请稍后重试', 1500);
+    const list = [];
+    for (const [uid, info] of friendDetails) {
+      let user;
+      // A friend whose QQ number cannot be resolved is left out rather than failing the whole list.
+      try { user = await uin(uid, info.uin); } catch (error) { if (!current()) throw error; continue; }
+      list.push({ user_id: Number(user), nickname: info.nick, remark: info.remark });
+    }
+    return list;
+  }
   // Services the action handler shares: forward fetching, quoted-message metadata, media cache and self-sent records.
+  receive.friendList = friendList;
   receive.expandForward = expandForward;
+  receive.fetchMessage = fetchMessage;
   receive.lookupRecent = lookupRecent;
   receive.resolveMedia = resolveMedia;
   receive.record = record;

@@ -9,7 +9,7 @@
 | 私聊、群聊文本 | `message` | |
 | 群临时会话 | `message/private/group` | |
 | 图片、表情、混合消息 | `image`、`face` 等消息段 | 收图会自动触发 QQ 下载并补充本地 `path`；开启正向 WS 时附带可访问的 `url`，纯反向 WS 时补充本地路径；也可调用 `get_image` |
-| @、语音、视频、回复、JSON/XML 卡片 | 标准消息段 | 回复 ID 与消息、撤回共用同一套映射 |
+| @、语音、视频、回复、JSON/XML 卡片 | 标准消息段 | 回复 ID 与消息、撤回共用同一套映射；`reply` 段只带被引用消息的 id，内容用 `get_msg` 读取 |
 | 合并转发 | `forward` 段，`data.content` 带展开后的节点 | 拉取失败时只带 `id`，可以用 `get_forward_msg` 重试 |
 | 文件、商城表情、Markdown | 扩展消息段 | 不自动下载 |
 | 群内戳一戳 | `notice/notify/poke` | 业务 `1061`；按 UID 解析操作者和目标 |

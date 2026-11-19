@@ -31,11 +31,11 @@
 | 类别 | 动作 |
 | --- | --- |
 | 发送 | `send_private_msg`、`send_group_msg`、`send_msg` |
-| 消息 | `get_forward_msg`、`get_image`、`delete_msg`（撤回） |
+| 消息 | `get_msg`、`get_forward_msg`、`get_image`、`delete_msg`（撤回）、`set_msg_emoji_like`（表情回应） |
 | 群管理 | `set_group_kick`、`set_group_ban`、`set_group_whole_ban`、`set_group_admin`、`set_group_card`、`set_group_name`、`set_group_leave`、`set_group_add_request` |
 | 好友 | `set_friend_add_request`、`send_like` |
-| 查询 | `get_group_list`、`get_group_info`、`get_group_member_list`、`get_group_member_info`、`get_stranger_info`、`get_login_info`、`get_status`、`get_version_info`、`can_send_image`、`can_send_record` |
-| 扩展 | `set_input_status` |
+| 查询 | `get_friend_list`、`get_group_list`、`get_group_info`、`get_group_member_list`、`get_group_member_info`、`get_stranger_info`、`get_login_info`、`get_status`、`get_version_info`、`can_send_image`、`can_send_record` |
+| 扩展 | `set_input_status`、`clean_cache`、`.handle_quick_operation`（快速操作，见 [connect.md](connect.md)） |
 
 没有列出的动作返回 `1404`。这个版本的 QQ 没有提供戳一戳发送和设置群头衔的接口，所以 `send_poke` 和 `set_group_special_title` 不在其中。
 
@@ -44,6 +44,7 @@
 {"action":"send_group_msg","params":{"group_id":987654321,"message":"[CQ:at,qq=123456789] 你好 [CQ:face,id=14]"},"echo":"send-2"}
 {"action":"send_group_msg","params":{"group_id":987654321,"message":[{"type":"reply","data":{"id":"12"}},{"type":"text","data":{"text":"收到"}}]},"echo":"reply-1"}
 {"action":"send_group_msg","params":{"group_id":987654321,"message":[{"type":"image","data":{"file":"C:\\pics\\a.png"}}]},"echo":"image-1"}
+{"action":"get_msg","params":{"message_id":12},"echo":"msg-1"}
 {"action":"get_forward_msg","params":{"id":"15"},"echo":"forward-1"}
 {"action":"set_input_status","params":{"user_id":123456789,"event_type":1},"echo":"typing-1"}
 {"action":"get_login_info","echo":"login-1"}
@@ -125,6 +126,7 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 
 | 动作 | 返回 |
 | --- | --- |
+| `get_friend_list` | 数组，元素含 `user_id`、`nickname`、`remark`。来自 QQ 最近一次推送的完整好友列表，不会向 QQ 刷新；登录同步完成前返回 `1500`，QQ 号解析不出来的好友会被略过 |
 | `get_group_list` | 数组，元素含 `group_id`、`group_name`、`member_count`、`max_member_count`。每次都会向 QQ 刷新 |
 | `get_group_info` | 单个群，字段同上，来自最近一次群列表；没有这个群返回 `1404` |
 | `get_group_member_list` | 数组，元素含 `user_id`、`nickname`、`card`、`role`（`owner`/`admin`/`member`）、`title`、`join_time`、`last_sent_time`、`level`、`shut_up_timestamp` 等 |
@@ -132,6 +134,25 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 | `get_stranger_info` | `user_id`、`nickname`、`sex`（`male`/`female`/`unknown`）、`age`；QQ 里查不到这个用户返回 `1404` |
 
 `shut_up_timestamp` 是禁言到期的时间戳（秒），没被禁言为 0。性别、年龄、地区还没有接入，分别固定为 `unknown`、`0`、空。
+
+## 表情回应与清理
+
+- `set_msg_emoji_like`：参数 `message_id`（与 `get_msg` 相同的 id 规则）、`emoji_id`（QQ 表情编号，或 emoji 的码点；数字）、`set`（默认 `true`，`false` 取消回应）。只支持群消息；消息必须还在 QQ 的本地记录里（用它的序号来定位），找不到返回 `1404`。这个动作调用 QQ 的 `setMsgEmojiLikes`，已在 QQ 9.9.37-54395 上用群消息验证：添加和取消「赞」（表情 76）都在群里生效。
+- `clean_cache`：清理 OpenQQ 自己的媒体临时目录里一小时前的残留，和启动时的清理规则一样；不会动 QQ 的缓存，也不会碰正在使用的文件。
+
+## 读取消息
+
+`get_msg` 按 `message_id` 读取一条消息的内容。收到的 `reply` 段只带被引用消息的 id，把这个 `data.id` 当作 `message_id` 传进来，就能读到被引用的消息；即使它发生在 OpenQQ 启动之前，只要 QQ 本地还留着也能读到。
+
+```json
+{"status":"ok","retcode":0,"data":{"time":1794470000,"message_type":"group","message_id":12,"real_id":12,"user_id":123456789,"sender":{"user_id":123456789,"nickname":"昵称","card":"群名片"},"message":[{"type":"text","data":{"text":"内容"}}],"raw_message":"内容","font":0,"group_id":987654321}}
+```
+
+私聊没有 `group_id` 和 `card`。限制：
+
+- `message_id` 只认本次运行期间收发过或被引用的消息（映射保存在内存里，最多 1 万条），其他 id 返回 `1404`。
+- 已撤回的消息、系统提示、QQ 本地找不到的消息返回 `1404`；QQ 拒绝或 8 秒内没有回应返回 `1500`。
+- 读消息不会触发下载：`image` 段只带 `file` 和 `file_id`，需要路径或内容时再调用 `get_image`；合并转发只带 `id`，需要内容时再调用 `get_forward_msg`。
 
 ## 合并转发
 
@@ -178,6 +199,6 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 
 ## 尚未实现
 
-戳一戳发送、设置群头衔（这个版本的 QQ 没有现成接口）、音乐卡片、合并转发发送、`get_msg`、好友列表、陌生人资料、匿名相关动作、群荣誉等。
+戳一戳发送、设置群头衔（这个版本的 QQ 没有现成接口）、音乐卡片、合并转发发送、匿名相关动作、群荣誉等。
 
 协议字段参考 [OneBot v11 公开 API](https://github.com/botuniverse/onebot-11/blob/master/api/public.md)。输入状态、申请 `flag` 的格式是 OpenQQ 的扩展。

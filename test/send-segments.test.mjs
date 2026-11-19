@@ -1,14 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
+import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import nativeActions from '../native/actions.cjs';
 import cq from '../native/cq.cjs';
+import sessionModule from '../native/session.cjs';
 import { createEventConverter } from '../src/onebot.mjs';
-import { dispatchAction } from '../src/actions.mjs';
+import { createNativeChannel } from '../src/ipc.mjs';
+import { createMediaPreparer } from '../src/media.mjs';
+import { dispatchAction, redactRequest, redactResponse } from '../src/actions.mjs';
 
 const self = { uin: '123456', uid: 'u_self' };
 const md5 = bytes => createHash('md5').update(bytes).digest('hex');
@@ -76,6 +80,12 @@ test('string messages are parsed as CQ code unless auto_escape is set', () => {
   const literal = { action: 'send_group_msg', params: { group_id: 1, message: '[CQ:at,qq=all]', auto_escape: true } };
   assert.equal(nativeActions.normalizeParams(literal), literal);
   assert.deepEqual(nativeActions.validateAction(literal).texts, ['[CQ:at,qq=all]']);
+  // An explicit auto_escape: false parses too, so CQ media in such a message is still prepared by the main process.
+  const explicit = nativeActions.normalizeParams({ action: 'send_group_msg', params: { group_id: 1, message: '[CQ:at,qq=all]', auto_escape: false } });
+  assert.deepEqual(explicit.params.message, [{ type: 'at', data: { qq: 'all' } }]);
+  const invalid = { action: 'send_group_msg', params: { group_id: 1, message: 'x', auto_escape: 'yes' } };
+  assert.equal(nativeActions.normalizeParams(invalid), invalid, 'a value that is not a boolean is left for validation to refuse');
+  assert.throws(() => nativeActions.validateAction(invalid), /auto_escape/);
   const array = { action: 'send_group_msg', params: { group_id: 1, message: [{ type: 'text', data: { text: 'x' } }] } };
   assert.equal(nativeActions.normalizeParams(array), array);
   assert.equal(nativeActions.normalizeParams({ action: 'get_status' }).action, 'get_status');
@@ -232,4 +242,101 @@ test('dispatchAction normalizes CQ strings, prepares media, lengthens the IPC wa
   assert.deepEqual((await dispatchAction(channel, converter, { action: 'can_send_image' })).data, { yes: true });
   assert.deepEqual((await dispatchAction(channel, converter, { action: 'can_send_record' })).data, { yes: true });
   assert.equal(calls.length, 1);
+});
+
+test('a base64:// image above the 1 MiB IPC frame limit is sent: only the prepared media travels to QQ (issue #12)', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'openqq-ipc-media-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const temp = join(root, 'temp');
+  const channel = await createNativeChannel();
+  t.after(() => channel.close());
+  let listener;
+  const sends = [];
+  const service = {
+    addKernelMsgListener(value) { listener = value; return 1; },
+    removeKernelMsgListener() {},
+    generateMsgUniqueId: () => '9007199254740993',
+    getRichMediaFilePathForGuild(request) { return join(root, 'QQ', 'Pic', request.md5HexStr + extname(request.fileName)); },
+    async sendMsg(_id, peer, elements) {
+      sends.push({ peer, elements });
+      queueMicrotask(() => listener.onMsgInfoListUpdate([{ ...peer, senderUin: self.uin, sendStatus: 2, msgId: '9007199254742001' }]));
+      return { result: 0 };
+    },
+  };
+  const session = {
+    init(_config, _a, _b, callbacks) { callbacks.onSessionInitComplete({ result: 0 }); },
+    getMsgService: () => service,
+    getMSFService: () => ({ getServerTime: () => '1794470400' }),
+  };
+  const connected = once(channel.events, 'connected');
+  const facade = sessionModule.startNative({ pipe: channel.path, token: channel.token }, { NodeIQQNTWrapperSession: { get: () => session } });
+  t.after(() => globalThis.__openqq_hook?.dispose());
+  await connected;
+  const ready = new Promise(resolve => channel.events.on('event', event => { if (event.type === 'session_ready') resolve(); }));
+  facade.NodeIQQNTWrapperSession.get().init({ selfUin: self.uin, selfUid: self.uid }, {}, {}, {});
+  await ready;
+
+  const bigPng = Buffer.alloc(800 * 1024);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bigPng);
+  bigPng.writeUInt32BE(13, 8); bigPng.write('IHDR', 12, 'latin1'); bigPng.writeUInt32BE(64, 16); bigPng.writeUInt32BE(32, 20);
+  bigPng[24] = 8; bigPng[25] = 6;
+  const base64 = bigPng.toString('base64');
+  assert.ok(Buffer.byteLength(base64) > 1024 * 1024, 'the source text alone exceeds the frame limit');
+
+  const converter = createEventConverter();
+  const media = createMediaPreparer({ dir: temp });
+  // Both the array form and a CQ string with an explicit auto_escape:false (which is parsed like the default) reach QQ.
+  for (const message of [[{ type: 'image', data: { file: 'base64://' + base64, summary: '[大图]' } }], `[CQ:image,file=base64://${base64}]`]) {
+    const params = { group_id: '555000', message, ...(typeof message === 'string' ? { auto_escape: false } : {}) };
+    const response = await dispatchAction(channel, converter, { action: 'send_group_msg', params }, { media });
+    assert.equal(response.status, 'ok', response.message);
+  }
+  assert.equal(sends.length, 2);
+  assert.equal(sends[0].elements[0].picElement.fileSize, bigPng.length);
+  assert.equal(sends[0].elements[0].picElement.summary, '[大图]');
+  assert.deepEqual(await readdir(temp), [], 'temporary files created from base64 are released');
+});
+
+test('prepared media segments keep only openqq_media and a capped image summary, whatever else the client sent', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'openqq-allowlist-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const media = createMediaPreparer({ dir: join(root, 'temp') });
+  const png = Buffer.alloc(40);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  png.writeUInt32BE(13, 8); png.write('IHDR', 12, 'latin1'); png.writeUInt32BE(8, 16); png.writeUInt32BE(8, 20); png[24] = 8; png[25] = 6;
+  const file = join(root, 'a.png');
+  await writeFile(file, png);
+  const prepared = await media.prepare({ message: [
+    { type: 'image', data: { file, url: 'http://x/y.png', thumb: 'x', cover: 'y', name: 'n.png', summary: 's'.repeat(100), extra: 'z'.repeat(5000) } },
+    { type: 'file', data: { file, name: 'doc.png', summary: 'not for files', blob: 'b'.repeat(5000) } },
+    { type: 'text', data: { text: 'kept as is', extra: 1 } },
+  ] });
+  const [image, plain, text] = prepared.params.message;
+  assert.deepEqual(Object.keys(image.data).sort(), ['openqq_media', 'summary']);
+  assert.equal(image.data.summary.length, 64);
+  assert.deepEqual(Object.keys(plain.data), ['openqq_media']);
+  assert.deepEqual(text.data, { text: 'kept as is', extra: 1 }, 'segments that are not media are left alone');
+  assert.ok(Buffer.byteLength(JSON.stringify(prepared.params)) < 2048, 'the frame no longer depends on what the client attached');
+  await prepared.release();
+});
+
+test('the copy shown in the WebUI and terminal replaces inline media with its size, and leaves everything else intact', () => {
+  const payload = 'QUJD'.repeat(2000);
+  const request = { action: 'send_group_msg', params: { group_id: 1, message: [{ type: 'image', data: { file: 'base64://' + payload, summary: 'hi' } },
+    { type: 'image', data: { file: 'data:image/png;base64,' + payload } }, { type: 'text', data: { text: 'plain text' } }] }, echo: 'e' };
+  const shown = redactRequest(request);
+  assert.deepEqual(shown.params.message[0].data, { file: 'base64://[已省略 8000 字符]', summary: 'hi' });
+  assert.equal(shown.params.message[1].data.file, 'data:image/png;base64,[已省略 8000 字符]');
+  assert.deepEqual(shown.params.message[2], { type: 'text', data: { text: 'plain text' } });
+  assert.equal(shown.echo, 'e');
+  assert.match(request.params.message[0].data.file, /^base64:\/\/QUJD/, 'the real request is not modified');
+  const cqString = redactRequest({ action: 'send_msg', params: { message: `look [CQ:image,file=base64://${payload}] at this` } });
+  assert.equal(cqString.params.message, 'look [CQ:image,file=base64://[已省略 8000 字符]] at this');
+  assert.equal(redactRequest({ params: { message: 'short base64://QUJD' } }).params.message, 'short base64://QUJD', 'small values stay readable');
+  assert.deepEqual(redactRequest({ a: [1, null, true] }), { a: [1, null, true] });
+
+  const response = { status: 'ok', retcode: 0, data: { file: 'C:\\a.png', size: 6000, base64: payload } };
+  assert.equal(redactResponse(response).data.base64, '[已省略 8000 字符]');
+  assert.equal(response.data.base64, payload);
+  assert.deepEqual(redactResponse({ status: 'ok', retcode: 0, data: null }), { status: 'ok', retcode: 0, data: null });
 });

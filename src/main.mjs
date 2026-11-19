@@ -8,7 +8,8 @@ import { inspectQQ, resolveLinuxWrapper, bootstrapInput, verifiedVersions } from
 import { detectEnvironment, isQQProcessRunning, probeNative } from './env.mjs';
 import { createNativeChannel } from './ipc.mjs';
 import { createEventConverter } from './onebot.mjs';
-import { dispatchAction } from './actions.mjs';
+import { createIdStore } from './idstore.mjs';
+import { dispatchAction, redactRequest, redactResponse } from './actions.mjs';
 import { createMediaPreparer } from './media.mjs';
 import { startCommandInput, inputHelp } from './input.mjs';
 import { createConsole } from './console.mjs';
@@ -75,6 +76,13 @@ function checkClient(qq) {
   return native;
 }
 
+// The startup banner's OneBot line: every way a bot can reach OpenQQ.
+function oneBotAccess(config) {
+  const parts = [config.ws.enabled && `ws://${config.ws.host}:${config.ws.port}`, config.http?.enabled && `http://${config.http.host}:${config.http.port}`,
+    config.reverseWs.some(item => item.enabled) && '反向 WS', config.httpPost?.some(item => item.enabled) && 'HTTP 上报'].filter(Boolean);
+  return parts.join(' · ') + (config.ws.enabled || config.http?.enabled ? '（令牌见 WebUI 接入配置）' : '：QQ 就绪后连接');
+}
+
 async function start(qq, config, existingWebUI) {
   const native = checkClient(qq);
   if (!qq.targetMatch) {
@@ -82,7 +90,9 @@ async function start(qq, config, existingWebUI) {
   }
   const channel = await createNativeChannel();
   let network;
-  const convert = createEventConverter({ mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null });
+  // message_id values survive a restart: the mapping to QQ's own ids is kept in .runtime/ids.json.
+  const convert = createEventConverter({ mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
+    idStore: createIdStore(join(runtimeDir, 'ids.json')) });
   // Sources of image / voice / video / file segments (local path, base64, URL) are fetched into this folder before sending.
   const media = createMediaPreparer({ dir: join(runtimeDir, 'media') });
   media.sweep().catch(() => {});
@@ -93,9 +103,12 @@ async function start(qq, config, existingWebUI) {
     const response = await dispatchAction(channel, convert, request, {
       media, version: pkg.version, mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
     });
-    webui?.publish('action', { request, response, source, elapsed: Math.round(performance.now() - started) });
+    // The WebUI and the terminal get a copy without inline media, so a large image is still listed instead of being dropped.
+    const shown = redactRequest(request);
+    const shownResponse = redactResponse(response);
+    webui?.publish('action', { request: shown, response: shownResponse, source, elapsed: Math.round(performance.now() - started) });
     // Terminal actions are printed by the input loop; external actions are mirrored here.
-    if (source !== 'terminal') out.action(request, response, source);
+    if (source !== 'terminal') out.action(shown, shownResponse, source);
     return response;
   };
   try {
@@ -124,7 +137,7 @@ async function start(qq, config, existingWebUI) {
   const qqLog = createWriteStream(qqLogPath, { flags: 'w' });
   qqLog.on('error', () => {});
   out.banner(`OpenQQ ${pkg.version}`, [['QQ 版本', qq.version], ['WebUI', webui.url],
-    ['OneBot', config.ws.enabled ? `ws://${config.ws.host}:${config.ws.port}（令牌见 WebUI 接入配置）` : '反向 WS：QQ 就绪后连接'], ['QQ 原始日志', qqLogPath]]);
+    ['OneBot', oneBotAccess(config)], ['QQ 原始日志', qqLogPath]]);
   let finish;
   let reject;
   const stopped = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
@@ -217,6 +230,7 @@ async function start(qq, config, existingWebUI) {
     botDispatch = async () => ({ status: 'failed', retcode: 1502, data: null, message: 'QQ 尚未就绪' });
     botLog = () => {};
     await channel.close();
+    convert.flush();
     await network.close();
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);

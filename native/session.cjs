@@ -41,7 +41,7 @@ function createSessionHook(report) {
       const current = () => active && attached.get(session) === attachment;
       const receive = createEventReceiver(session, self, emit, current);
       attachment.actions = createActionHandler(session, self, current, {
-        expandForward: receive.expandForward, lookupRecent: receive.lookupRecent, resolveMedia: receive.resolveMedia, record: receive.record, groups: receive.groups,
+        expandForward: receive.expandForward, fetchMessage: receive.fetchMessage, friendList: receive.friendList, lookupRecent: receive.lookupRecent, resolveMedia: receive.resolveMedia, record: receive.record, groups: receive.groups,
       });
       for (const [source, getter, add, remove] of [
         ['msg', 'getMsgService', 'addKernelMsgListener', 'removeKernelMsgListener'],

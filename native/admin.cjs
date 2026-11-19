@@ -53,7 +53,16 @@ function validate(request, params) {
       if (!ref) throw fail('message_id 无效或已过期（仅支持本次运行期间收发过的消息）', 1404);
       return { kind: 'delete_msg', ref };
     }
+    case 'set_msg_emoji_like': {
+      const ref = messageRef(params.openqq_ref);
+      if (!ref) throw fail('message_id 无效或已过期（仅支持本次运行期间收发过或被引用的消息）', 1404);
+      if (ref.chatType !== 2) throw fail('只有群消息可以添加表情回应');
+      const emoji = typeof params.emoji_id === 'number' ? String(params.emoji_id) : params.emoji_id;
+      if (typeof emoji !== 'string' || !/^\d{1,10}$/.test(emoji)) throw fail('emoji_id 必须是表情编号（数字）');
+      return { kind: 'emoji_like', ref, emoji, set: flag(params.set, 'set', true) };
+    }
     case 'send_like': return { kind: 'send_like', user: user(), times: integer(params.times, 'times', 1, 20, 1) };
+    case 'get_friend_list': return { kind: 'friend_list' };
     case 'get_group_list': return { kind: 'group_list' };
     case 'get_group_info': return { kind: 'group_info', group: group() };
     case 'get_group_member_list': return { kind: 'group_member_list', group: group() };
@@ -64,7 +73,7 @@ function validate(request, params) {
 }
 
 const kinds = new Set(['group_kick', 'group_ban', 'group_whole_ban', 'group_admin', 'group_card', 'group_name', 'group_leave', 'group_request', 'friend_request',
-  'delete_msg', 'send_like', 'group_list', 'group_info', 'group_member_list', 'group_member_info', 'stranger_info']);
+  'delete_msg', 'emoji_like', 'send_like', 'friend_list', 'group_list', 'group_info', 'group_member_list', 'group_member_info', 'stranger_info']);
 
 // QQ reports refusals inside the resolved value; methods that return nothing are treated as accepted.
 function outcome(result, what) {
@@ -145,12 +154,25 @@ async function run(action, ctx) {
     case 'delete_msg':
       outcome(await session.getMsgService().recallMsg({ chatType: action.ref.chatType, peerUid: action.ref.peerUid, guildId: '0' }, [action.ref.msgId]), '撤回消息');
       return null;
+    case 'emoji_like': {
+      // A reaction is addressed by the message's sequence number, which only QQ's own record of the message has. Ids below 1000 are QQ faces
+      // (type 1), longer ones are emoji code points (type 2).
+      const peer = { chatType: action.ref.chatType, peerUid: action.ref.peerUid, guildId: '' };
+      const service = session.getMsgService();
+      const found = (await service.getMsgsByMsgId(peer, [action.ref.msgId]))?.msgList?.find(item => String(item.msgId) === action.ref.msgId);
+      ensure();
+      if (!found || !/^\d+$/.test(String(found.msgSeq ?? ''))) throw fail('消息在 QQ 本地记录中找不到', 1404);
+      outcome(await service.setMsgEmojiLikes(peer, String(found.msgSeq), action.emoji, action.emoji.length > 3 ? '2' : '1', action.set), '表情回应');
+      ensure();
+      return null;
+    }
     case 'send_like': {
       const uid = await ctx.uidFor(action.user);
       ensure();
       outcome(await session.getProfileLikeService().setBuddyProfileLike({ friendUid: uid, sourceId: 71, doLikeCount: action.times, doLikeTollCount: 0 }), '点赞');
       return null;
     }
+    case 'friend_list': return ctx.friendList();
     case 'group_list': return (await ctx.groupList(true)).map(groupOf);
     case 'group_info': {
       const item = (await ctx.groupList(false)).find(value => String(value.groupCode) === action.group);
