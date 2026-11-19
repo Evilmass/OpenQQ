@@ -424,3 +424,60 @@ test('received images trigger downloadRichMedia when missing on disk, preserve s
   const resolved = await receive.resolveMedia('uuid-1', 'image');
   assert.deepEqual([resolved.file, resolved.file_name, resolved.file_size], [oriPath, 'pic.png', 14]);
 });
+
+test('a download receipt is a success when it names the finished file, as QQ 9.9.37 reports it with trasferStatus 4; only an error code or message is a failure', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'openqq-recv-status-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const files = { done: join(dir, 'done.png'), later: join(dir, 'later.png'), stuck: join(dir, 'stuck.png') };
+  await writeFile(files.done, Buffer.from('png-bytes'));
+  const raw = [];
+  const events = [];
+  const convert = createEventConverter({ mediaUrl: () => null });
+  let receive;
+  const notify = fields => receive('msg', 'onRichMediaDownloadComplete', [{ thumbSize: 0, fileDownType: 1, fileErrMsg: '', totalSize: 0, ...fields }]);
+  receive = nativeEvents.createEventReceiver({
+    getUixConvertService: () => ({ getUin: async uids => ({ uinInfo: new Map(uids.map(uid => [uid, '654321'])) }) }),
+    getMsgService: () => ({
+      async downloadRichMedia(request) {
+        const element = request.elementId;
+        // 1: the receipt exactly as the real client sends it (status 4, error code 0, the file's path).
+        if (element === '501') queueMicrotask(() => notify({ msgId: '301', msgElementId: '501', trasferStatus: 4, fileErrCode: 0, filePath: files.done }));
+        // 2: a progress receipt that names a file that is not there yet, then the finished one.
+        if (element === '502') queueMicrotask(async () => {
+          await notify({ msgId: '302', msgElementId: '502', trasferStatus: 1, fileErrCode: '0', filePath: files.later });
+          await writeFile(files.later, Buffer.from('later-bytes'));
+          await notify({ msgId: '302', msgElementId: '502', trasferStatus: 4, fileErrCode: '0', filePath: files.later });
+        });
+        // 3: QQ reports an error.
+        if (element === '503') queueMicrotask(() => notify({ msgId: '303', msgElementId: '503', trasferStatus: 3, fileErrCode: '9004', fileErrMsg: 'no space left' }));
+        // 4: an error message without a code.
+        if (element === '504') queueMicrotask(() => notify({ msgId: '304', msgElementId: '504', trasferStatus: 4, fileErrMsg: 'denied' }));
+        // 5: only progress, never finishing: the timeout names the last receipt.
+        if (element === '505') queueMicrotask(() => notify({ msgId: '305', msgElementId: '505', trasferStatus: 1, fileErrCode: '0', filePath: files.stuck }));
+        return { result: 0 };
+      },
+    }),
+  }, self, event => { raw.push(event); const converted = convert(event); if (converted) events.push(converted); }, () => true, { mediaTimeoutMs: 120 });
+  const image = (msgId, elementId) => base({ msgId, elements: [{ elementType: 2, elementId, picElement: { fileName: msgId + '.png', md5HexStr: msgId, fileUuid: 'uuid-' + msgId, sourcePath: '' } }] });
+  const errors = () => raw.filter(item => item.type === 'event_error' && item.stage === 'msg/image').map(item => item.error);
+
+  await receive('msg', 'onRecvMsg', [[image('301', '501')]]);
+  assert.equal(events.at(-1).message[0].data.path, files.done, 'status 4 without an error is a finished download');
+  assert.deepEqual(errors(), []);
+
+  await receive('msg', 'onRecvMsg', [[image('302', '502')]]);
+  assert.equal(events.at(-1).message[0].data.path, files.later, 'a progress receipt does not end the wait');
+  assert.deepEqual(errors(), []);
+
+  await receive('msg', 'onRecvMsg', [[image('303', '503')]]);
+  assert.match(errors().at(-1), /no space left（trasferStatus=3, fileErrCode=9004, fileErrMsg=no space left/);
+  assert.equal(events.at(-1).message[0].data.path, undefined, 'the message is still delivered, without a path');
+
+  await receive('msg', 'onRecvMsg', [[image('304', '504')]]);
+  assert.match(errors().at(-1), /denied（/);
+
+  await receive('msg', 'onRecvMsg', [[image('305', '505')]]);
+  assert.match(errors().at(-1), /图片下载超时（最后一次回执：trasferStatus=1, fileErrCode=0, .*有 filePath）/);
+  assert.equal(errors().length, 3);
+  assert.equal(raw.filter(item => item.type === 'native_callback' && item.event === 'richmedia_receipt').length, 1, 'the receipt\'s field names are reported once');
+});

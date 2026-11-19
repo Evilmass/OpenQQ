@@ -201,19 +201,32 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
     cacheMediaKey(entry.path, entry);
     if (entry.msgId && entry.elementId) cacheMediaKey(`${entry.msgId}:${entry.elementId}`, entry);
   }
+  // The fields of a download receipt that say how it went (numbers and short codes only, never a path or content), for error messages.
+  const describeNotify = notify => ['trasferStatus', 'fileErrCode', 'fileErrMsg', 'fileDownType', 'thumbSize', 'curSize', 'totalSize']
+    .filter(name => notify[name] !== undefined).map(name => `${name}=${String(notify[name]).slice(0, 60)}`).join(', ') + (typeof notify.filePath === 'string' && notify.filePath ? ', 有 filePath' : ', 无 filePath');
+  const lastNotice = new Map();
   function resolveDownloadNotify(notify) {
     if (!notify || typeof notify !== 'object') return;
     const key = `${notify.msgId ?? ''}:${notify.msgElementId ?? ''}`;
     const waiters = downloadWaiters.get(key);
     if (!waiters || !waiters.size) return;
+    // Field names, once: enough to see what a receipt carries if QQ changes it.
+    native('msg', 'richmedia_receipt', [notify]);
+    lastNotice.set(key, describeNotify(notify));
+    if (lastNotice.size > 200) lastNotice.delete(lastNotice.keys().next().value);
     // Ignore thumbnail progress/completion while waiting for an original (thumbSize=0) download.
     if (notify.thumbSize !== undefined && Number(notify.thumbSize) !== 0) return;
-    const errCode = notify.fileErrCode !== undefined && String(notify.fileErrCode) !== '' && String(notify.fileErrCode) !== '0';
-    const failed = errCode || (notify.trasferStatus !== undefined && ![0, 2].includes(Number(notify.trasferStatus)));
-    for (const waiter of [...waiters]) {
-      if (failed) waiter.reject(new Error(notify.fileErrMsg || `QQ 富媒体下载失败 (${notify.fileErrCode || notify.trasferStatus})`));
-      else waiter.resolve(typeof notify.filePath === 'string' ? notify.filePath : '');
+    // QQ 9.9.37 reports a finished download as trasferStatus=4 with fileErrCode=0, an empty fileErrMsg and the file's path, so the status number
+    // says nothing about failure: an error is an error code (or, without a code, an error message). Anything else resolves once the file is there.
+    const code = notify.fileErrCode === undefined || notify.fileErrCode === null ? '' : String(notify.fileErrCode);
+    const message = typeof notify.fileErrMsg === 'string' ? notify.fileErrMsg.trim() : '';
+    const failed = (code !== '' && code !== '0') || (code === '' && message !== '');
+    if (failed) {
+      for (const waiter of [...waiters]) waiter.reject(new Error(`${message || 'QQ 富媒体下载失败'}（${describeNotify(notify)}）`));
+      return;
     }
+    // A receipt without the file yet (progress) is ignored; the later receipt, or the timeout, decides.
+    existingFile(notify.filePath).then(ready => { if (ready) for (const waiter of [...(downloadWaiters.get(key) ?? [])]) waiter.resolve(ready); });
   }
   async function downloadPicture(entry) {
     const ready = await existingFile(entry.path);
@@ -236,7 +249,7 @@ function createEventReceiver(session, self, report, current, { memberRetryMs = M
         let waiters = downloadWaiters.get(waitKey);
         if (!waiters) { waiters = new Set(); downloadWaiters.set(waitKey, waiters); }
         waiters.add(waiter);
-        timer = setTimeout(() => waiter.reject(new Error('图片下载超时')), mediaTimeoutMs);
+        timer = setTimeout(() => waiter.reject(new Error('图片下载超时' + (lastNotice.has(waitKey) ? `（最后一次回执：${lastNotice.get(waitKey)}）` : '（没有收到下载回执）'))), mediaTimeoutMs);
       });
       completed.catch(() => {});
       try {
