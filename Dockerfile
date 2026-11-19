@@ -111,7 +111,7 @@ ENV NODE_ENV=production \
     OPENQQ_QQ_NO_SANDBOX=1 \
     OPENQQ_QQ_DISABLE_GPU=1
 
-EXPOSE 17860 3001 6080
+EXPOSE 17860 3001 5700 6080
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/openqq-entrypoint.sh"]
 CMD ["start"]

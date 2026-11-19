@@ -31,6 +31,12 @@ export const reverseMeta: Record<string, StatusMeta> = {
   reconnecting: { label: '重连中', tone: 'warning', description: '连接断开，正在重试' },
 };
 
+export const postMeta: Record<string, StatusMeta> = {
+  waiting: { label: '等待事件', tone: 'neutral', description: '收到第一个事件后开始上报' },
+  ok: { label: '上报正常', tone: 'success', description: '最近一次上报被接收' },
+  failed: { label: '上报失败', tone: 'destructive', description: '最近一次上报没有成功（连接失败、超时或非 2xx 响应）' },
+};
+
 const dotColor: Record<Tone, string> = {
   success: 'bg-success', warning: 'bg-warning', destructive: 'bg-destructive', neutral: 'bg-muted-foreground/60', primary: 'bg-foreground', outline: 'bg-muted-foreground/60',
 };

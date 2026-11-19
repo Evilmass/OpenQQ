@@ -5,14 +5,17 @@ import { isUncPath } from './env.mjs';
 
 export function defaultConfig(detected = {}) {
   const defaultRoot = process.platform === 'win32' ? 'C:\\Program Files\\Tencent\\QQNT' : '/opt/QQ';
+  // Inside a container the published port only reaches a socket bound to 0.0.0.0 (the Dockerfile sets OPENQQ_WS_HOST).
+  const host = ['127.0.0.1', '0.0.0.0'].includes(process.env.OPENQQ_WS_HOST) ? process.env.OPENQQ_WS_HOST : '127.0.0.1';
   return {
     version: 1,
     qqRoot: detected.qqRoot || process.env.OPENQQ_QQ_ROOT || defaultRoot,
     webPort: 17860,
     accessToken: randomBytes(32).toString('hex'),
-    // Inside a container the published port only reaches a socket bound to 0.0.0.0 (the Dockerfile sets OPENQQ_WS_HOST).
-    ws: { enabled: true, host: ['127.0.0.1', '0.0.0.0'].includes(process.env.OPENQQ_WS_HOST) ? process.env.OPENQQ_WS_HOST : '127.0.0.1', port: 3001 },
+    ws: { enabled: true, host, port: 3001 },
     reverseWs: [],
+    http: { enabled: false, host, port: 5700 },
+    httpPost: [],
   };
 }
 
@@ -35,7 +38,22 @@ export function validateConfig(value) {
     if (typeof item.token !== 'string' || !/^[\x21-\x7e]{0,256}$/.test(item.token)) fail('反向令牌格式无效');
     return { enabled: item.enabled, url: url.href, token: item.token };
   });
-  if (!value.ws.enabled && !reverseWs.some(item => item.enabled)) fail('请至少启用一个 WebSocket 接入');
+  // Older config files predate the HTTP options: they stay valid and simply keep HTTP off.
+  const http = value.http ?? { enabled: false, host: '127.0.0.1', port: 5700 };
+  if (!http || typeof http.enabled !== 'boolean' || !['127.0.0.1', '0.0.0.0'].includes(http.host) || !port(http.port)) fail('HTTP 服务端配置无效');
+  if (http.enabled && http.port === value.webPort) fail('WebUI 和 HTTP 端口不能相同');
+  if (http.enabled && value.ws.enabled && http.port === value.ws.port) fail('WebSocket 和 HTTP 端口不能相同');
+  const rawPost = value.httpPost ?? [];
+  if (!Array.isArray(rawPost) || rawPost.length > 8) fail('最多配置 8 个 HTTP 上报地址');
+  const httpPost = rawPost.map(item => {
+    if (!item || typeof item.enabled !== 'boolean' || typeof item.url !== 'string' || item.url.length > 2048) fail('HTTP 上报配置无效');
+    let url; try { url = new URL(item.url); } catch { fail('HTTP 上报 URL 无效'); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) fail('上报 URL 需为 http:// 或 https://，不能带账号密码或 #');
+    const secret = item.secret ?? '';
+    if (typeof secret !== 'string' || !/^[\x21-\x7e]{0,256}$/.test(secret)) fail('上报密钥格式无效');
+    return { enabled: item.enabled, url: url.href, secret };
+  });
+  if (!value.ws.enabled && !reverseWs.some(item => item.enabled) && !http.enabled && !httpPost.some(item => item.enabled)) fail('请至少启用一种接入方式');
   return {
     version: 1,
     qqRoot: value.qqRoot.trim(),
@@ -43,6 +61,8 @@ export function validateConfig(value) {
     accessToken: value.accessToken,
     ws: { enabled: value.ws.enabled, host: value.ws.host, port: value.ws.port },
     reverseWs,
+    http: { enabled: http.enabled, host: http.host, port: http.port },
+    httpPost,
   };
 }
 

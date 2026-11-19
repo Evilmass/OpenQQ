@@ -60,7 +60,8 @@ export default function Settings() {
     try { await config.save(); toast.success('设置已保存', config.running ? '重启 OpenQQ 后生效。' : undefined); }
     catch (error) { toast.error('保存失败', (error as Error).message); }
   }
-  const masked = draft && { ...draft, accessToken: '••••••••', reverseWs: draft.reverseWs.map(item => ({ ...item, token: item.token ? '••••••••' : '' })) };
+  const masked = draft && { ...draft, accessToken: '••••••••', reverseWs: draft.reverseWs.map(item => ({ ...item, token: item.token ? '••••••••' : '' })),
+    httpPost: draft.httpPost.map(item => ({ ...item, secret: item.secret ? '••••••••' : '' })) };
 
   return <Page>
     <PageHeader title="设置" description="界面偏好保存在当前浏览器；客户端与端口设置写入本机配置文件。" />

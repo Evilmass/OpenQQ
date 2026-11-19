@@ -1,10 +1,13 @@
 export type Phase = 'setup' | 'detached' | 'starting' | 'hook_installed' | 'session_ready' | 'offline' | 'failed' | 'hook_error';
 
 export type ReverseState = 'waiting' | 'connecting' | 'connected' | 'reconnecting';
+export type PostState = 'waiting' | 'ok' | 'failed';
 
 export interface NetworkState {
   ws: { enabled: boolean; address: string | null; clients: number };
   reverseWs: { index: number; state: ReverseState | string }[];
+  http?: { enabled: boolean; address: string | null };
+  httpPost?: { index: number; state: PostState | string }[];
 }
 
 export interface SessionState {
@@ -64,6 +67,7 @@ export type Entry =
   | { id: number; kind: 'diagnostic'; time: string; data: Diagnostic };
 
 export interface ReverseConfig { enabled: boolean; url: string; token: string }
+export interface HttpPostConfig { enabled: boolean; url: string; secret: string }
 export interface OpenQQConfig {
   version: 1;
   qqRoot: string;
@@ -71,6 +75,8 @@ export interface OpenQQConfig {
   accessToken: string;
   ws: { enabled: boolean; host: '127.0.0.1' | '0.0.0.0'; port: number };
   reverseWs: ReverseConfig[];
+  http: { enabled: boolean; host: '127.0.0.1' | '0.0.0.0'; port: number };
+  httpPost: HttpPostConfig[];
 }
 
 export interface Detected {

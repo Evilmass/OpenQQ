@@ -10,7 +10,7 @@ import { ActivityChart } from '../components/activity-chart';
 import { EntryDetail, KindBadge } from '../components/entry';
 import { MetricCard, Meter } from '../components/metric-card';
 import { EmptyState, ErrorState, Page, PageHeader } from '../components/page';
-import { StatusBadge, StatusDot, reverseMeta, sessionStatus } from '../components/status';
+import { StatusBadge, StatusDot, postMeta, reverseMeta, sessionStatus } from '../components/status';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Skeleton } from '../components/ui/misc';
@@ -57,7 +57,14 @@ function ConnectionHealth() {
         {network.reverseWs.map(item => { const meta = reverseMeta[item.state] ?? { label: item.state, tone: 'neutral' as const }; return <li key={item.index} className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium">反向连接 {item.index + 1}</span><StatusBadge meta={meta} icon={false} />
         </li>; })}
-        {!network.ws.enabled && !network.reverseWs.length && <li className="text-caption text-muted-foreground">没有启用的连接</li>}
+        {network.http?.enabled && <li className="flex items-center justify-between gap-3">
+          <span className="grid min-w-0"><span className="text-sm font-medium">HTTP 服务</span><span className="truncate font-mono text-xs text-muted-foreground">{network.http.address ?? '正在启动'}</span></span>
+          <StatusBadge meta={{ label: '已启用', tone: 'success' }} icon={false} />
+        </li>}
+        {network.httpPost?.map(item => { const meta = postMeta[item.state] ?? { label: item.state, tone: 'neutral' as const }; return <li key={'post' + item.index} className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">HTTP 上报 {item.index + 1}</span><StatusBadge meta={meta} icon={false} />
+        </li>; })}
+        {!network.ws.enabled && !network.reverseWs.length && !network.http?.enabled && !network.httpPost?.length && <li className="text-caption text-muted-foreground">没有启用的连接</li>}
       </ul>}
     </CardContent>
   </Card>;

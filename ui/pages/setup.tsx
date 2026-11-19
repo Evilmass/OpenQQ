@@ -90,7 +90,9 @@ export default function Setup() {
   function final(value: OpenQQConfig): OpenQQConfig {
     return { version: 1, qqRoot: value.qqRoot.trim(), webPort: Number(value.webPort), accessToken: value.accessToken,
       ws: { enabled: mode !== 'reverse', host: value.ws.host, port: Number(value.ws.port) },
-      reverseWs: value.reverseWs.filter(item => item.url.trim()).map(item => ({ enabled: mode !== 'forward' && item.enabled, url: item.url.trim(), token: item.token })) };
+      reverseWs: value.reverseWs.filter(item => item.url.trim()).map(item => ({ enabled: mode !== 'forward' && item.enabled, url: item.url.trim(), token: item.token })),
+      // The wizard only covers WebSocket; HTTP options set on the Connections page pass through unchanged.
+      http: value.http, httpPost: value.httpPost };
   }
   async function check() {
     if (!draft) return null;

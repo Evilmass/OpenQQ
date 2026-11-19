@@ -14,7 +14,7 @@ Windows x64 与 Linux（x64 / arm64）QQ NT 的 OneBot v11 桥接，同时支持
 
 ## 功能
 
-- OneBot v11：正向 WebSocket 服务端（Bearer Header 或 `access_token` 查询参数鉴权，鉴权失败有限流），反向 WebSocket 客户端（最多 8 个目标，QQ 会话就绪时断线后每 3 秒重连一次）。心跳固定每 15 秒一次，目前不能配置。
+- OneBot v11：正向 WebSocket 服务端（Bearer Header 或 `access_token` 查询参数鉴权，鉴权失败有限流），反向 WebSocket 客户端（最多 8 个目标，QQ 会话就绪时断线后每 3 秒重连一次）。心跳固定每 15 秒一次，目前不能配置。另有可选的 HTTP 服务（GET / POST 调用动作，支持 `_async`）、HTTP POST 上报（最多 8 个接收端，可用 `X-Signature` 校验）和快速操作（`.handle_quick_operation`），见 [docs/connect.md](docs/connect.md)。
 - 启动前检查：Windows 扫描注册表和常见路径找到 QQ NT，解析 `QQNT.dll`、`wrapper.node` 的 x64 PE 导出表；Linux 探测 `/opt/QQ` 等路径并解析 `qq`、`wrapper.node` 的 ELF64 动态符号表，确认 `qq_magic_napi_register` 等 N-API 符号都在。
 - 发送与管理：文本、CQ 码、@、表情、图片、语音、视频、文件、骰子、猜拳、引用回复；撤回、踢人、禁言、全员禁言、管理员、群名片、群名、退群、处理入群/好友申请、点赞，以及群和成员查询。详见 [docs/actions.md](docs/actions.md)。
 - WebUI：默认只监听 `127.0.0.1`（容器内可通过 `--web-host 0.0.0.0` 配合本机端口映射），每次启动生成临时访问密钥。有配置向导（`/setup`）和控制台：概览（会话、吞吐、连接状态）、按会话收发消息、事件流、OneBot 动作调试、运行日志，以及账号、连接和设置管理。
@@ -91,7 +91,7 @@ npm start -- --qq-root "C:\Program Files\Tencent\QQNT"    # 临时指定 QQ 目�
 | `npm run doctor` | 检查 QQ NT、原生启动器和路径兼容性 |
 | `npm run init` | 在终端里交互生成 `config/openqq.json` |
 | `npm run webui` | 只启动配置向导（预览模式） |
-| `npm start` | 启动 OpenQQ、WebUI 和 OneBot WebSocket，并挂接 QQ |
+| `npm start` | 启动 OpenQQ、WebUI 和 OneBot 接入（WebSocket，可选 HTTP），并挂接 QQ |
 | `npm run bot` | 运行示例机器人（需要 `ONEBOT_TOKEN`） |
 | `npm run build` | 编译原生组件并打包 WebUI（`start`、`webui`、`test` 会自动执行） |
 | `npm run build:native` | 用本机工具链编译启动器、DLL 和模拟宿主 |
@@ -118,7 +118,7 @@ npm start -- --qq-root "C:\Program Files\Tencent\QQNT"    # 临时指定 QQ 目�
 - WebUI 默认只绑定 `127.0.0.1`。访问密钥用 `timingSafeEqual` 比较；页面加载后立刻用 `history.replaceState` 清掉 URL 片段里的密钥，之后只放在当前标签页的 `sessionStorage`。
 - 路径和会话脚本通过标准输入交给原生启动器（`openqq-launch.exe` / `openqq-launch`），包括管道/Unix Socket 路径和一次性令牌，所以它们不会出现在进程命令行里；Linux 端通过仅父子可见的匿名管道将配置传入 `openqq-bootstrap.so` 后立即关闭描述符并清理环境变量，不进入环境变量或子进程。
 - 配置文件拒绝 UNC 路径和控制字符。启动器只从项目目录加载，并通过文件句柄或 `realpath` 确认 QQ、wrapper 和原生模块的真实路径；IPC Unix Socket 置于 `0700` 权限临时目录内且仅对当前用户可读写（`0600`）。
-- OneBot 正向 WebSocket 服务端会限制单个 IP 的连续鉴权失败：60 秒内超过 20 次返回 429。WebUI 的访问密钥是每次启动随机生成的 256 位值，没有单独的失败限流，只限制同时执行的动作数。以 `//` 开头的请求地址会被两个服务拒绝，反向连接不跟随重定向。
+- OneBot 正向 WebSocket 服务端和 HTTP 服务都会限制单个 IP 的连续鉴权失败：60 秒内超过 20 次返回 429。WebUI 的访问密钥是每次启动随机生成的 256 位值，没有单独的失败限流，只限制同时执行的动作数。以 `//` 开头的请求地址会被两个服务拒绝，反向连接不跟随重定向。
 
 - 图形化 Bot 的积木程序由 `src/bot/interpreter.mjs` 解释执行，只认白名单积木，不用 `eval`，有步数/时间/循环/消息数预算和发送、AI 调用的频率限制；媒体积木拒绝本机路径。AI 的 API Key 只存在 `data/bot/ai.json`（不进版本控制），接口和日志里只显示「已保存」和末 4 位。详见 [docs/bot.md](docs/bot.md#限制与安全)。
 

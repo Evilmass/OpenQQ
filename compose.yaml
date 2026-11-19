@@ -13,6 +13,7 @@ services:
       # Bound to 127.0.0.1 by default for security; use an SSH tunnel or reverse proxy for remote access.
       - "127.0.0.1:17860:17860" # WebUI setup & console
       - "127.0.0.1:3001:3001"   # OneBot v11 forward WebSocket
+      # - "127.0.0.1:5700:5700" # OneBot v11 HTTP API (turn it on in the WebUI Connections page first)
       - "127.0.0.1:6080:6080"   # noVNC screen for first-time QQ login / captcha
     volumes:
       - ./docker-data/config:/app/config
