@@ -1,4 +1,4 @@
-import { Activity, Blocks, Braces, Cable, CircleUserRound, LayoutDashboard, MessagesSquare, ScrollText, Settings, Sparkles, type LucideIcon } from 'lucide-react';
+import { Activity, Blocks, Braces, Cable, CircleUserRound, ImagePlus, LayoutDashboard, MessagesSquare, ScrollText, Settings, Sparkles, type LucideIcon } from 'lucide-react';
 
 export interface NavItem { path: string; title: string; description: string; icon: LucideIcon; keywords?: string }
 export interface NavGroup { id: string; title: string; items: NavItem[] }
@@ -11,6 +11,7 @@ export const navGroups: NavGroup[] = [
   { id: 'bot', title: 'Bot', items: [
     { path: '/bot', title: 'Bot 编程', description: '拖积木编制 Bot，设置人设和记忆', icon: Blocks, keywords: 'bot blocks scratch blockly program memory persona ai 积木 机器人 人设 记忆 广告' },
     { path: '/ai', title: 'AI 接入', description: '填写 API Key 与 Base URL，选择模型', icon: Sparkles, keywords: 'ai api key base url model openai relay zelix 模型 接入' },
+    { path: '/image', title: 'AI 生图', description: '用 OpenAI 兼容接口生成图片，默认 api.zelix.asia', icon: ImagePlus, keywords: 'image generate draw picture dall-e gpt-image flux zelix key 生图 画图 绘图 图片' },
   ] },
   { id: 'debug', title: '调试', items: [
     { path: '/events', title: '事件', description: '实时 OneBot 事件与动作回执', icon: Activity, keywords: 'events inspector stream' },

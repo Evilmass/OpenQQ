@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import nativeActions from '../native/actions.cjs';
+import { generateImage } from './image-action.mjs';
 
 const fail = (message, retcode = 1400) => Object.assign(new Error(message), { retcode });
 const sendActions = ['send_private_msg', 'send_group_msg', 'send_msg'];
@@ -37,10 +38,13 @@ export function redactRequest(value, depth = 0) {
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactRequest(item, depth + 1)]));
 }
 
-// get_image answers with the picture as plain base64.
+// get_image answers with the picture as plain base64, generate_image with base64:// files.
 export function redactResponse(response) {
-  const base64 = response?.data?.base64;
-  return typeof base64 === 'string' && base64.length > 512 ? { ...response, data: { ...response.data, base64: `[已省略 ${base64.length} 字符]` } } : response;
+  const data = response?.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return response;
+  const plain = typeof data.base64 === 'string' && data.base64.length > 512;
+  if (!plain && !Array.isArray(data.images)) return response;
+  return { ...response, data: { ...data, ...(plain ? { base64: `[已省略 ${data.base64.length} 字符]` } : {}), ...(Array.isArray(data.images) ? { images: redactRequest(data.images) } : {}) } };
 }
 
 // OneBot ids are local to this process; translate them into the native references QQ needs before validation.
@@ -92,6 +96,10 @@ export async function dispatchAction(channel, converter, request, options = {}) 
     const local = localAnswer(request, options);
     if (local !== undefined) {
       response = { status: 'ok', retcode: 0, data: local };
+    } else if (request?.action === 'generate_image') {
+      // 发送走同一个 dispatchAction，所以图片照常经过媒体处理（落盘、大小限制）和 QQ 的发送回执。
+      const data = await generateImage(request.params ?? {}, { image: options.image, send: next => dispatchAction(channel, converter, next, options) });
+      response = { status: 'ok', retcode: 0, data };
     } else if (request?.action === 'clean_cache') {
       // Only OpenQQ's own temporary media is cleaned, and only what an earlier run left behind (the same rule as at startup).
       await options.media?.sweep();

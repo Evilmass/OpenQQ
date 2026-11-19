@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 
 // Client-side routes of the single-page console; each one serves index.html.
-const pages = ['/', '/messages', '/events', '/actions', '/logs', '/account', '/connections', '/bot', '/ai', '/settings'];
+const pages = ['/', '/messages', '/events', '/actions', '/logs', '/account', '/connections', '/bot', '/ai', '/image', '/settings'];
 const files = new Map([
   ...pages.map(path => [path, ['index.html', 'text/html; charset=utf-8']]),
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],

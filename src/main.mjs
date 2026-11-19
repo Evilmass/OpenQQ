@@ -19,6 +19,7 @@ import { setupCLI } from './setup.mjs';
 import { startOneBot } from './network.mjs';
 import { createBotStore } from './bot/store.mjs';
 import { createAIClient } from './bot/ai.mjs';
+import { createImageClient } from './bot/image.mjs';
 import { createBotEngine } from './bot/engine.mjs';
 import { createBotApi } from './bot/api.mjs';
 
@@ -61,7 +62,9 @@ let botLog = () => {};
 const botStore = createBotStore({ dir: join(dataDir, 'bot') });
 const botAI = createAIClient({ settings: () => botStore.readAi() });
 const botEngine = createBotEngine({ store: botStore, ai: botAI, dispatch: request => botDispatch(request), log: entry => botLog(entry) });
-const botApi = createBotApi({ store: botStore, engine: botEngine, ai: botAI });
+// 生图客户端只有一个：WebUI 的生图页和 OneBot 的 generate_image 动作共用它，所以同一时间只会有一个生成任务。
+const botImage = createImageClient({ settings: () => botStore.readImage() });
+const botApi = createBotApi({ store: botStore, engine: botEngine, ai: botAI, image: botImage });
 for (const item of botStore.skipped) out.log('warn', `Bot ${item.id} 无法载入：${item.error}`);
 
 function checkClient(qq) {
@@ -101,7 +104,7 @@ async function start(qq, config, existingWebUI) {
   const execute = async (request, source) => {
     const started = performance.now();
     const response = await dispatchAction(channel, convert, request, {
-      media, version: pkg.version, mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
+      media, image: botImage, version: pkg.version, mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
     });
     // The WebUI and the terminal get a copy without inline media, so a large image is still listed instead of being dropped.
     const shown = redactRequest(request);

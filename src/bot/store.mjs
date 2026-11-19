@@ -1,5 +1,6 @@
 // Bot 配置和 AI 设置的落盘。目录结构（dir 默认 data/bot，可用 OPENQQ_DATA_DIR 指向别处）：
 //   ai.json                  Base URL、API Key、模型……（权限 0600）。Key 只存在这里，不会写进别的文件。
+//   image.json               生图接口的设置（Base URL、API Key、模型、尺寸……，权限 0600），和 ai.json 各存各的
 //   ads.json                 WebUI 里推广位（广告）的文案、链接和开关；只用于界面显示，和 Bot、QQ 消息无关
 //   bots/<id>/bot.json       一个 Bot：积木程序、人设、记忆设置、适用范围、频率限制
 //   bots/<id>/memory.json    这个 Bot 的记忆（由 memory.mjs 管理）
@@ -64,6 +65,47 @@ export function mergeAiSettings(current, patch) {
   }
   if (patch.maxTokens !== undefined) next.maxTokens = integer(patch.maxTokens, 16, 8192, '最大回复长度（tokens）');
   if (patch.timeoutSec !== undefined) next.timeoutSec = integer(patch.timeoutSec, 5, 120, '超时秒数');
+  const typed = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : '';
+  if (typed) {
+    if (!/^[\x21-\x7e]{1,512}$/.test(typed)) fail('API Key 只能包含不含空格的可见 ASCII 字符（最多 512 位）');
+    next.apiKey = typed;
+  } else if (patch.clearApiKey === true) next.apiKey = '';
+  else if (current.apiKey && originOf(next.baseUrl) !== originOf(current.baseUrl)) {
+    fail('更换了 Base URL 的服务器地址，请同时重新填写 API Key（旧 Key 不会发给新的服务器）');
+  }
+  return next;
+}
+
+// ---- 生图设置 -------------------------------------------------------------------------------------------------
+export const imageDefaults = { baseUrl: 'https://api.zelix.asia', model: 'gpt-image-1', size: '1024x1024', count: 1, timeoutSec: 120 };
+export const imageLimits = { promptChars: 4000, maxCount: 4, minTimeout: 10, maxTimeout: 300 };
+export const imageSizePattern = /^(?:auto|\d{3,4}x\d{3,4})$/;
+export const defaultImageSettings = () => ({ baseUrl: imageDefaults.baseUrl, apiKey: '', model: imageDefaults.model, size: imageDefaults.size, count: imageDefaults.count, timeoutSec: imageDefaults.timeoutSec });
+
+/** 返回给 WebUI 的版本：永远不含 Key，只告诉前端「有没有填」和末 4 位。 */
+export function publicImageSettings(settings) {
+  const key = settings.apiKey;
+  return {
+    baseUrl: settings.baseUrl, model: settings.model, size: settings.size, count: settings.count, timeoutSec: settings.timeoutSec,
+    apiKeySet: Boolean(key), apiKeyHint: key ? (key.length >= 12 ? '••••' + key.slice(-4) : '••••') : '',
+  };
+}
+
+/** 规则和 mergeAiSettings 一样：apiKey 为空 = 不改；clearApiKey = 清除；换了服务器地址必须同时重填 Key。 */
+export function mergeImageSettings(current, patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) fail('生图设置格式无效');
+  const next = { ...current };
+  if (patch.baseUrl !== undefined) next.baseUrl = patch.baseUrl === '' ? imageDefaults.baseUrl : normalizeBaseUrl(patch.baseUrl);
+  if (patch.model !== undefined) {
+    if (typeof patch.model !== 'string' || patch.model.length > 200 || /[\r\n]/.test(patch.model)) fail('模型名称无效');
+    next.model = patch.model.trim();
+  }
+  if (patch.size !== undefined) {
+    if (typeof patch.size !== 'string' || !imageSizePattern.test(patch.size.trim())) fail('图片尺寸需要是 auto 或「宽x高」，例如 1024x1024');
+    next.size = patch.size.trim();
+  }
+  if (patch.count !== undefined) next.count = integer(patch.count, 1, imageLimits.maxCount, '一次生成的张数');
+  if (patch.timeoutSec !== undefined) next.timeoutSec = integer(patch.timeoutSec, imageLimits.minTimeout, imageLimits.maxTimeout, '超时秒数');
   const typed = typeof patch.apiKey === 'string' ? patch.apiKey.trim() : '';
   if (typed) {
     if (!/^[\x21-\x7e]{1,512}$/.test(typed)) fail('API Key 只能包含不含空格的可见 ASCII 字符（最多 512 位）');
@@ -152,6 +194,7 @@ export function createBotStore({ dir, now = () => new Date() } = {}) {
   const save = bot => writeJson(join(botDir(bot.id), 'bot.json'), bot);
   const copy = bot => structuredClone(bot);
   let aiCache;
+  let imageCache;
   let adsCache;
 
   return {
@@ -160,6 +203,9 @@ export function createBotStore({ dir, now = () => new Date() } = {}) {
     // 每次收到消息都会读设置，所以缓存在内存里；只有 writeAi 会改它。
     readAi() { aiCache ??= { ...defaultAiSettings(), ...readJson(join(dir, 'ai.json')) }; return { ...aiCache }; },
     writeAi(settings) { writeJson(join(dir, 'ai.json'), settings, 0o600); aiCache = { ...settings }; },
+    // 生图设置：和 AI 设置分开保存，只有 WebUI 的生图页会读写它。
+    readImage() { imageCache ??= { ...defaultImageSettings(), ...readJson(join(dir, 'image.json')) }; return { ...imageCache }; },
+    writeImage(settings) { writeJson(join(dir, 'image.json'), settings, 0o600); imageCache = { ...settings }; },
     // 界面推广位设置。文件损坏或字段不合规时退回默认值，不影响其他功能。
     readAds() {
       if (!adsCache) {

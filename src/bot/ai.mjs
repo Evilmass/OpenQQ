@@ -24,7 +24,7 @@ export function isLocalHost(hostname) {
  * 规范化用户填写的 Base URL：
  *   https://host            → https://host/v1
  *   https://host/v1/        → https://host/v1
- *   https://host/v1/chat/completions → https://host/v1
+ *   https://host/v1/chat/completions → https://host/v1（/models、/images/generations 同理）
  * 不接受账号密码、查询参数；非本机地址必须 https，避免把 Key 明文发到公网。
  */
 export function normalizeBaseUrl(input) {
@@ -35,7 +35,7 @@ export function normalizeBaseUrl(input) {
   if (url.username || url.password) throw new AIError('Base URL 里不要带账号密码，Key 请填到 API Key 栏');
   if (url.search || url.hash) throw new AIError('Base URL 里不要带 ? 或 # 参数');
   if (url.protocol === 'http:' && !isLocalHost(url.hostname)) throw new AIError('非本机地址必须使用 https://，否则 Key 会被明文发送');
-  let path = url.pathname.replace(/\/+$/, '').replace(/\/(?:chat\/completions|models)$/i, '');
+  let path = url.pathname.replace(/\/+$/, '').replace(/\/(?:chat\/completions|models|images\/generations)$/i, '');
   if (!path) path = '/v1';
   return url.origin + path;
 }

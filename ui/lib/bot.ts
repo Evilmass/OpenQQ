@@ -5,6 +5,15 @@ import type { Segment } from './types';
 export interface AiSettings { baseUrl: string; model: string; temperature: number; maxTokens: number; timeoutSec: number; apiKeySet: boolean; apiKeyHint: string }
 export interface AiTestResult { ok: boolean; message: string; latency: number; model?: string; reply?: string }
 
+/** 生图页的设置：和 AI 接入各存各的，Key 同样永远不会返回。 */
+export interface ImageSettings {
+  baseUrl: string; model: string; size: string; count: number; timeoutSec: number; apiKeySet: boolean; apiKeyHint: string;
+  limits: { promptChars: number; maxCount: number; minTimeout: number; maxTimeout: number };
+}
+export interface ImageTestResult { ok: boolean; message: string; latency: number; models?: number }
+export interface GeneratedImage { dataUrl: string; mime: string; width: number; height: number; bytes: number; revisedPrompt?: string }
+export interface ImageResult { images: GeneratedImage[]; model: string; size: string; elapsedMs: number }
+
 export interface Persona { name: string; systemPrompt: string; personality: string; traits: string; style: string; temperature: number | null }
 export interface MemorySettings { enabled: boolean; contextTurns: number; summary: 'rule' | 'ai' }
 /** WebUI 里的推广位：只在界面显示，和 Bot、QQ 消息无关。 */
@@ -43,6 +52,7 @@ export const triggerNames: Record<string, string> = {
 };
 
 export const useAiSettings = () => useQuery({ queryKey: ['bot-ai'], queryFn: () => request<AiSettings>('/api/bot/ai') });
+export const useImageSettings = () => useQuery({ queryKey: ['bot-image'], queryFn: () => request<ImageSettings>('/api/bot/image') });
 export const useAds = () => useQuery({ queryKey: ['bot-ads'], queryFn: () => request<AdSettings>('/api/bot/ads'), staleTime: 60_000 });
 export const useBotList = () => useQuery({ queryKey: ['bot-list'], queryFn: () => request<BotList>('/api/bot/bots'), refetchInterval: 15_000 });
 export const useBot = (id: string | null) => useQuery({ queryKey: ['bot', id], enabled: Boolean(id), queryFn: async () => (await request<{ bot: Bot }>(`/api/bot/bots/${id}`)).bot });

@@ -35,7 +35,7 @@
 | 群管理 | `set_group_kick`、`set_group_ban`、`set_group_whole_ban`、`set_group_admin`、`set_group_card`、`set_group_name`、`set_group_leave`、`set_group_add_request` |
 | 好友 | `set_friend_add_request`、`send_like` |
 | 查询 | `get_friend_list`、`get_group_list`、`get_group_info`、`get_group_member_list`、`get_group_member_info`、`get_stranger_info`、`get_login_info`、`get_status`、`get_version_info`、`can_send_image`、`can_send_record` |
-| 扩展 | `set_input_status`、`clean_cache`、`.handle_quick_operation`（快速操作，见 [connect.md](connect.md)） |
+| 扩展 | `set_input_status`、`generate_image`（生图）、`clean_cache`、`.handle_quick_operation`（快速操作，见 [connect.md](connect.md)） |
 
 没有列出的动作返回 `1404`。这个版本的 QQ 没有提供戳一戳发送和设置群头衔的接口，所以 `send_poke` 和 `set_group_special_title` 不在其中。
 
@@ -134,6 +134,26 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 | `get_stranger_info` | `user_id`、`nickname`、`sex`（`male`/`female`/`unknown`）、`age`；QQ 里查不到这个用户返回 `1404` |
 
 `shut_up_timestamp` 是禁言到期的时间戳（秒），没被禁言为 0。性别、年龄、地区还没有接入，分别固定为 `unknown`、`0`、空。
+
+## 生图
+
+`generate_image` 用控制台「AI 生图」页保存的 Base URL、Key 和模型生成图片（设置见 [bot.md](bot.md#ai-生图)），所以先要在那一页填好 Key。
+
+```json
+{"action":"generate_image","params":{"prompt":"一只戴着飞行员护目镜的橘猫，柔和的晨光"},"echo":"img-1"}
+{"action":"generate_image","params":{"prompt":"一幅水彩风景","size":"1536x1024","n":2,"group_id":987654321},"echo":"img-2"}
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `prompt` | 必填，提示词，最多 4000 个字符 |
+| `model`、`size`、`n` | 可选，只对这一次调用覆盖保存的模型、尺寸（`auto` 或「宽x高」）和张数（1–4） |
+| `group_id` 或 `user_id` | 可选，二选一。给了就把生成的图片作为一条消息发过去；都不给则只返回图片 |
+
+- **不给目标**：返回 `images`，每张有 `file`（形如 `base64://…`，可以直接放进 `image` 段发出去）、`mime`、`width`、`height`、`bytes`，以及模型改写后的提示词 `revised_prompt`（有的话），另有 `model`、`size`、`elapsed_ms`。
+- **给了目标**：发送走和 `send_group_msg` / `send_private_msg` 一样的流程，返回 `message_id`；`images` 里只有尺寸等信息，不再带图片数据。图片生成后发送失败时返回错误「图片已生成，但发送失败：…」，图片不会重复生成。
+- 返回码：提示词、参数或设置有问题（比如没填 Key）是 `1400`；已经有一个生图任务在进行是 `1503`；接口或网络出错是 `1500`。同一时间只会有一个生图任务，和控制台的生图页共用这个限制。
+- 生成通常要几十秒，最长等「AI 生图」页里设置的超时（默认 120 秒）。HTTP 调用可以用 `generate_image_async` 立即返回，在后台生成（给了目标时会照常发送）。每次生成都会向接口计费。
 
 ## 表情回应与清理
 

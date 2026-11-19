@@ -1,7 +1,8 @@
 // WebUI 的 /api/bot/* 接口。鉴权、同源检查和请求体大小限制由 webui.mjs 统一完成，这里只做业务。
 // 约定：任何响应都不含 API Key（见 publicAiSettings）；AI 设置的修改、测试都走这里。
 import { createAIClient, normalizeBaseUrl, originOf } from './ai.mjs';
-import { mergeAiSettings, publicAiSettings, MAX_BOTS } from './store.mjs';
+import { createImageClient } from './image.mjs';
+import { mergeAiSettings, mergeImageSettings, publicAiSettings, publicImageSettings, imageLimits, MAX_BOTS } from './store.mjs';
 import { compileProgram } from './compile.mjs';
 import { templates } from './templates.mjs';
 import { personalityPresets, replyStyles } from './persona.mjs';
@@ -13,7 +14,7 @@ export class ApiError extends Error {
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-export function createBotApi({ store, engine, ai }) {
+export function createBotApi({ store, engine, ai, image = createImageClient({ settings: () => store.readImage() }) }) {
   function summary(bot) {
     let hats = 0;
     try { hats = compileProgram(bot.program).hats.length; } catch { /* 摘要里不显示错误 */ }
@@ -34,7 +35,41 @@ export function createBotApi({ store, engine, ai }) {
     return draft;
   }
 
+  // 生图页的草稿设置，规则同上：表单里填的优先，换了服务器地址又没重新输入 Key 时不会沿用已保存的 Key。
+  function draftImageSettings(body) {
+    const saved = store.readImage();
+    const draft = { ...saved };
+    if (typeof body.baseUrl === 'string' && body.baseUrl.trim()) draft.baseUrl = normalizeBaseUrl(body.baseUrl);
+    const key = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    if (key) draft.apiKey = mergeImageSettings({ ...saved, apiKey: '' }, { apiKey: key, baseUrl: draft.baseUrl }).apiKey;
+    else if (originOf(draft.baseUrl) !== originOf(saved.baseUrl)) draft.apiKey = '';
+    const patch = {};
+    for (const field of ['model', 'size', 'count', 'timeoutSec']) if (body[field] !== undefined && body[field] !== '') patch[field] = body[field];
+    return mergeImageSettings(draft, patch);
+  }
+
   const routes = {
+    'GET /api/bot/image': () => ({ ...publicImageSettings(store.readImage()), limits: imageLimits }),
+    'POST /api/bot/image': ({ body }) => {
+      store.writeImage(mergeImageSettings(store.readImage(), body));
+      return { ...publicImageSettings(store.readImage()), limits: imageLimits };
+    },
+    'POST /api/bot/image/models': async ({ body }) => {
+      try { return { models: await ai.listModels(draftImageSettings(body)) }; }
+      catch (error) { throw new ApiError(error.message); }
+    },
+    // 测试连接只读一次模型列表：免费，也不会生成图片。
+    'POST /api/bot/image/test': async ({ body }) => {
+      const started = performance.now();
+      try {
+        const models = await ai.listModels(draftImageSettings(body));
+        return { ok: true, latency: Math.round(performance.now() - started), message: `连接成功，接口返回 ${models.length} 个模型`, models: models.length };
+      } catch (error) { return { ok: false, latency: Math.round(performance.now() - started), message: error.message }; }
+    },
+    'POST /api/bot/image/generate': async ({ body }) => {
+      try { return await image.generate({ config: draftImageSettings(body), prompt: body.prompt }); }
+      catch (error) { throw new ApiError(error.message, Number.isInteger(error.status) ? error.status : 400); }
+    },
     'GET /api/bot/ai': () => publicAiSettings(store.readAi()),
     'POST /api/bot/ai': ({ body }) => {
       store.writeAi(mergeAiSettings(store.readAi(), body));

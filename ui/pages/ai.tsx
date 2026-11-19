@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { ConfirmDialog } from '../components/ui/dialog';
 import { Field, Input, SecretInput } from '../components/ui/form';
 import { Skeleton } from '../components/ui/misc';
+import { PickInput } from '../components/ui/pick-input';
 import { toast } from '../components/ui/toast';
 
 interface Draft { baseUrl: string; apiKey: string; model: string; temperature: string; maxTokens: string; timeoutSec: string }
@@ -87,9 +88,8 @@ export default function AiPage() {
         </Field>
         <Field label="模型" htmlFor="ai-model" description="直接输入模型名，或点「获取模型列表」后从下拉里选择。"
           action={<Button variant="outline" size="xs" onClick={fetchModels} loading={busy === 'models'}>{busy !== 'models' && <List />}获取模型列表</Button>}>
-          <Input id="ai-model" list="ai-models" value={draft.model} placeholder="例如 gpt-4o-mini" spellCheck={false} className="font-mono text-caption" aria-describedby="ai-model-hint"
-            onChange={event => set({ model: event.target.value })} />
-          <datalist id="ai-models">{models.map(name => <option key={name} value={name} />)}</datalist>
+          <PickInput id="ai-model" value={draft.model} onValueChange={model => set({ model })} options={models} placeholder="例如 gpt-4o-mini"
+            listLabel={models.length ? `从 ${models.length} 个模型中选择` : '选择模型'} describedBy="ai-model-hint" selectClassName="w-64" />
         </Field>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="温度" htmlFor="ai-temp" error={issues.temperature} description="越高越随机，0–2。每个 Bot 可以在人设里单独设置。">
