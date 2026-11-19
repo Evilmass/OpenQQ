@@ -1,6 +1,6 @@
 {
   "name": "openqq",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "OneBot v11 bridge for Windows & Linux QQ NT with a C++ native bootstrap",
   "keywords": [
     "onebot",
