@@ -67,6 +67,12 @@ static std::string exitCode(DWORD code) {
         : code == 0x80000003 ? " breakpoint" : code == 0xC000013A ? " console interrupt" : "";
     return std::string(hex) + name;
 }
+static std::string describeException(DWORD code, uintptr_t address, bool secondChance) {
+    char text[64];
+    std::snprintf(text, sizeof(text), "0x%08lX at 0x%llX", static_cast<unsigned long>(code), static_cast<unsigned long long>(address));
+    return std::string(text) + (code == EXCEPTION_BREAKPOINT ? " breakpoint" : code == EXCEPTION_SINGLE_STEP ? " single-step" : "")
+        + (secondChance ? " (unhandled)" : "");
+}
 static std::string line(size_t limit) {
     std::string result;
     char c;
@@ -91,9 +97,13 @@ class Launcher {
     std::string source;
     // Where the bootstrap was when something went wrong; included in every failure message.
     const char* stage = "starting QQ";
+    // The last exception handed back to QQ that could have ended it, so an early exit explains itself.
+    std::string passed;
+    bool registersUnread = false;
 
     [[noreturn]] void exited(DWORD code) {
-        throw std::runtime_error("QQ exited before bootstrap completed (exit code " + exitCode(code) + "; stage: " + stage + ")");
+        throw std::runtime_error("QQ exited before bootstrap completed (exit code " + exitCode(code) + "; stage: " + stage
+            + (passed.empty() ? "" : "; last exception passed to QQ: " + passed) + ")");
     }
     // Once the initializer is redirected no more breakpoints are needed: detach so QQ never continues its
     // startup under a debugger, then wait for the bootstrap status without debug events.
@@ -221,12 +231,26 @@ class Launcher {
         auto code = event.u.Exception.ExceptionRecord.ExceptionCode;
         auto address = reinterpret_cast<uintptr_t>(event.u.Exception.ExceptionRecord.ExceptionAddress);
         if (code == EXCEPTION_BREAKPOINT && !initialBreakpoint) { initialBreakpoint = true; return; }
-        if (code != EXCEPTION_SINGLE_STEP || address != watch || !watch) { disposition = DBG_EXCEPTION_NOT_HANDLED; return; }
+        if (code != EXCEPTION_SINGLE_STEP || address != watch || !watch) {
+            disposition = DBG_EXCEPTION_NOT_HANDLED;
+            // Ordinary first-chance exceptions (C++ throws, thread names) are QQ's own business; remember only the ones that can end it.
+            const bool secondChance = !event.u.Exception.dwFirstChance;
+            if (secondChance || code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP) passed = describeException(code, address, secondChance);
+            return;
+        }
         auto thread = threads.at(event.dwThreadId);
         CONTEXT context{};
         context.ContextFlags = CONTEXT_ALL;
         require(GetThreadContext(thread, &context), "GetThreadContext breakpoint");
-        if (!(context.Dr6 & 1)) { disposition = DBG_EXCEPTION_NOT_HANDLED; return; }
+        // The exception already sits on the watched address. Dr6.B0 only tells it from a trace-flag step, and some systems hand the debug
+        // registers back as zeros (an armed thread always has Dr7.L0 set), so reject it only when the registers were really read back.
+        if (!context.Dr6 && !context.Dr7) {
+            if (!registersUnread) { registersUnread = true; log("{\"stage\":\"debug_registers_unread\",\"pid\":" + std::to_string(process.dwProcessId) + "}"); }
+        } else if (!(context.Dr6 & 1)) {
+            disposition = DBG_EXCEPTION_NOT_HANDLED;
+            passed = describeException(code, address, false) + " not claimed (Dr6 B0 clear)";
+            return;
+        }
         if (callback) { inject(event.dwThreadId, context); return; }
         auto module = context.Rcx;
         auto init = module ? read<uintptr_t>(module + 16) : 0;
@@ -237,10 +261,11 @@ class Launcher {
         bool target = found != modules.end() && found->second == wrapper;
         log("{\"stage\":\"addon_register\",\"name\":" + quote(name ? string(name) : "") + ",\"target\":" + (target ? "true}" : "false}"));
         if (target) { callback = init; watchAll(callback); stage = "waiting for the wrapper initializer"; }
-        context.Dr0 = watch;
-        context.Dr6 = 0;
         context.EFlags |= 0x10000;
+        // Never write back debug registers that were read here: if the system returned zeros they would disarm this thread.
+        context.ContextFlags &= ~DWORD(CONTEXT_DEBUG_REGISTERS);
         require(SetThreadContext(thread, &context), "resume registration");
+        setWatch(thread);
     }
 public:
     ~Launcher() {
