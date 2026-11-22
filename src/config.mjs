@@ -89,6 +89,6 @@ export function saveConfig(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   const temp = path + '.' + randomBytes(8).toString('hex') + '.tmp';
   try { writeFileSync(temp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); renameSync(temp, path); }
-  finally { rmSync(temp, { force: true }); }
+  finally { try { rmSync(temp, { force: true }); } catch { /* ignore */ } }
   return config;
 }

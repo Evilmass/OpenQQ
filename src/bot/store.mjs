@@ -22,7 +22,7 @@ function writeJson(path, value, mode = 0o600) {
   mkdirSync(join(path, '..'), { recursive: true });
   const temp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
   try { writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { mode, flag: 'wx' }); renameSync(temp, path); }
-  finally { rmSync(temp, { force: true }); }
+  finally { try { rmSync(temp, { force: true }); } catch { /* ignore */ } }
 }
 function readJson(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }

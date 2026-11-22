@@ -86,7 +86,7 @@ export function createMemory({ file, limits: overrides = {}, now = Date.now, sav
     mkdirSync(dirname(file), { recursive: true });
     const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
     try { writeFileSync(temp, body, { mode: 0o600, flag: 'wx' }); renameSync(temp, file); }
-    finally { rmSync(temp, { force: true }); }
+    finally { try { rmSync(temp, { force: true }); } catch { /* ignore */ } }
     dirty = false;
   }
   function touch() {

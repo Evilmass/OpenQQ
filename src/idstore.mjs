@@ -39,7 +39,7 @@ export function createIdStore(path, { limit = 10000, delayMs = 2000 } = {}) {
       writeFileSync(temp, JSON.stringify({ version: 1, nextId, entries: entries.slice(-limit) }), { mode: 0o600, flag: 'wx' });
       renameSync(temp, path);
     } catch { /* best effort */ }
-    finally { rmSync(temp, { force: true }); }
+    finally { try { rmSync(temp, { force: true }); } catch { /* best effort */ } }
   }
 
   return {
