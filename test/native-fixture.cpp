@@ -214,6 +214,9 @@ static void* init_last_registered() {
     return entry && entry->init ? entry->init(&global_object, &global_object) : nullptr;
 }
 API void RunFixture(callback decoy) {
+#ifdef _WIN32
+    if (mode("breakpoint")) DebugBreak();
+#endif
     napi_module unrelated = {0, 0, "fixture-decoy.node", decoy, "wrapper", nullptr, {}};
     qq_magic_napi_register(&unrelated);
     init_last_registered();

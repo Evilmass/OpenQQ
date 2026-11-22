@@ -1,6 +1,6 @@
 export function segmentText(message) {
   if (typeof message === 'string') return message;
-  const labels = { image: '图片', face: '表情', record: '语音', video: '视频', file: '文件', reply: '回复', json: '应用', xml: '卡片', markdown: 'Markdown', mface: '商城表情', forward: '合并转发' };
+  const labels = { image: '图片', face: '表情', record: '语音', video: '视频', file: '文件', reply: '回复', json: '应用', xml: '卡片', markdown: 'Markdown', mface: '商城表情', forward: '合并转发', dice: '骰子', rps: '猜拳', poke: '戳一戳', contact: '推荐名片' };
   const app = raw => { try { const card = typeof raw === 'string' ? JSON.parse(raw) : raw; return String(card?.prompt || card?.app || '').slice(0, 60); } catch { return ''; } };
   return (Array.isArray(message) ? message : []).map(item => item?.type === 'text' ? String(item.data?.text ?? '')
     : item?.type === 'at' ? '@' + String(item.data?.qq ?? '')
@@ -17,11 +17,11 @@ export function describeEntry(entry) {
   if (entry.kind === 'diagnostic') return { kind: 'diagnostic', title: String(value.type || '运行日志'),
     text: String(value.error || value.event || value.stage || '运行状态更新'), source: String(value.source || 'OpenQQ'),
     failed: ['event_error', 'hook_error'].includes(value.type) || (value.type === 'bot_run' && value.status === 'error') };
-  if (value.post_type === 'message') return { kind: 'message', title: String(value.sender?.card || value.sender?.nickname || value.user_id || '消息'), text: segmentText(value.message), source };
+  if (value.post_type === 'message' || value.post_type === 'message_sent') return { kind: 'message', title: String(value.sender?.card || value.sender?.nickname || value.user_id || '消息'), text: segmentText(value.message), source };
   if (value.post_type === 'request') return { kind: 'request', title: value.request_type === 'friend' ? '好友申请' : '群申请', text: String(value.comment || '没有验证留言'), source };
-  const names = { group_recall: '群消息撤回', friend_recall: '私聊撤回', group_increase: '成员加入', group_decrease: '成员离开', group_admin: '管理员变更', group_ban: '禁言变更', group_upload: '文件上传', friend_add: '新增好友', group_card: '群名片变更', bot_offline: 'QQ 已掉线' };
-  return { kind: 'notice', title: value.sub_type === 'poke' ? '戳一戳' : names[value.notice_type] || String(value.sub_type || value.notice_type || '通知'),
-    text: value.sub_type === 'poke' ? value.user_id + ' 戳了戳 ' + value.target_id : String(value.file?.name || value.status_text || value.reason || value.group_name || '查看事件详情'), source };
+  const names = { group_recall: '群消息撤回', friend_recall: '私聊撤回', group_increase: '成员加入', group_decrease: '成员离开', group_admin: '管理员变更', group_ban: '禁言变更', group_upload: '文件上传', friend_add: '新增好友', group_card: '群名片变更', group_msg_emoji_like: '表情回应', essence: '精华消息', bot_offline: 'QQ 已掉线' };
+  return { kind: 'notice', title: value.sub_type === 'poke' ? '戳一戳' : value.sub_type === 'title' ? '群头衔变更' : names[value.notice_type] || String(value.sub_type || value.notice_type || '通知'),
+    text: value.sub_type === 'poke' ? value.user_id + ' 戳了戳 ' + value.target_id : value.sub_type === 'title' ? `${value.user_id} 获得头衔「${value.title ?? ''}」` : String(value.file?.name || value.status_text || value.reason || value.group_name || '查看事件详情'), source };
 }
 
 // Severity and readable text for a diagnostic entry; mirrors the terminal wording in src/console.mjs.

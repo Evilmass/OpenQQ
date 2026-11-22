@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const ELEMENT = { text: 1, pic: 2, file: 3, ptt: 4, video: 5, face: 6 };
+const ELEMENT = { text: 1, pic: 2, file: 3, ptt: 4, video: 5, face: 6, ark: 10, mface: 11, markdown: 14 };
 const PIC_TYPE = { jpeg: 1000, png: 1001, webp: 1002, bmp: 1005, gif: 2000 };
 const VIDEO_FORMAT = { mp4: 2, mov: 8 };
 // Placeholder waveform QQ draws under a voice message; the real one is not needed for playback.
@@ -56,7 +56,7 @@ function createElementBuilder({ session, ensure, groupCode, memberUid, memberNam
       const staged = await stage(service(), media.path, ELEMENT.pic, media.name);
       ensure();
       return base(ELEMENT.pic, 'picElement', { md5HexStr: staged.md5, fileSize: staged.size, picWidth: media.width, picHeight: media.height, fileName: media.name,
-        sourcePath: staged.target, original: true, picType: PIC_TYPE[media.format] ?? PIC_TYPE.png, picSubType: 0, fileUuid: '', fileSubId: '', thumbFileSize: 0, summary: part.summary });
+        sourcePath: staged.target, original: true, picType: PIC_TYPE[media.format] ?? PIC_TYPE.png, picSubType: part.subType ?? 0, fileUuid: '', fileSubId: '', thumbFileSize: 0, summary: part.summary });
     },
     async record(part) {
       const media = part.media;
@@ -91,7 +91,30 @@ function createElementBuilder({ session, ensure, groupCode, memberUid, memberNam
       const media = part.media;
       const staged = await stage(service(), media.path, ELEMENT.file, media.name);
       ensure();
-      return base(ELEMENT.file, 'fileElement', { fileMd5: staged.md5, fileName: media.name, filePath: staged.target, fileSize: String(staged.size) });
+      return base(ELEMENT.file, 'fileElement', { fileMd5: staged.md5, fileName: media.name, filePath: staged.target, fileSize: String(staged.size),
+        ...(part.folderId ? { folderId: part.folderId } : {}) });
+    },
+    mface(part) {
+      return base(ELEMENT.mface, 'marketFaceElement', {
+        emojiPackageId: part.emojiPackageId, emojiId: part.emojiId, key: part.key, faceName: part.summary || '[商城表情]',
+      });
+    },
+    markdown(part) {
+      return base(ELEMENT.markdown, 'markdownElement', { content: part.content });
+    },
+    async contact(part) {
+      let arkData;
+      if (part.contactType === 'group') {
+        const res = await session.getGroupService().getGroupRecommendContactArkJson(part.id);
+        ensure();
+        arkData = res?.arkJson;
+      } else {
+        const res = await session.getBuddyService().getBuddyRecommendContactArkJson(part.id, '');
+        ensure();
+        arkData = res?.arkMsg;
+      }
+      if (typeof arkData !== 'string' || !arkData) throw new Error('QQ 未返回推荐联系人卡片');
+      return base(ELEMENT.ark, 'arkElement', { bytesData: arkData, linkInfo: null, subElementType: null });
     },
   };
 }

@@ -5,6 +5,7 @@ import { request } from '../lib/api';
 import { useImageSettings, type ImageResult, type ImageSettings, type ImageTestResult } from '../lib/bot';
 import { formatBytes } from '../lib/utils';
 import { ErrorState, Page, PageHeader } from '../components/page';
+import { AdSlot } from '../components/bot/ad';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -102,6 +103,8 @@ export default function ImagePage() {
     <PageHeader title="AI 生图" description="调用 OpenAI 兼容的 /images/generations 接口生成图片。默认使用 api.zelix.asia 中转站，也可以换成任何兼容的服务。"
       meta={<Badge tone={configured ? 'success' : 'warning'}>{saved.apiKeySet ? (saved.model ? '已配置' : '未选模型') : '未填 Key'}</Badge>} />
 
+    <AdSlot />
+
     <Card>
       <CardHeader><div className="grid gap-0.5"><CardTitle><Plug className="size-4 text-muted-foreground" aria-hidden />接口</CardTitle><CardDescription>和「AI 接入」各存各的设置：这里的 Base URL 和 Key 只用于生图。</CardDescription></div></CardHeader>
       <CardContent className="grid gap-4">
@@ -116,8 +119,8 @@ export default function ImagePage() {
             <div className="min-w-0 flex-1">
               <SecretInput id="img-key" value={draft.apiKey} placeholder={saved.apiKeySet ? '留空保持不变' : 'sk-…'} aria-describedby="img-key-hint" onChange={event => set({ apiKey: event.target.value })} />
             </div>
-            <Button asChild variant="outline">
-              <a href={KEY_URL} target="_blank" rel="noopener noreferrer sponsored" aria-label="点击获取 KEY（在新标签页打开 zelix.asia）"><ExternalLink />点击获取 KEY</a>
+            <Button asChild className="ad-banner-cta">
+              <a href={KEY_URL} target="_blank" rel="noopener noreferrer sponsored" aria-label="点击获取 KEY（在新标签页打开 zelix.asia）"><ExternalLink className="ad-banner-arrow" aria-hidden />点击获取 KEY</a>
             </Button>
           </div>
         </Field>

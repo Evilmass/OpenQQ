@@ -67,12 +67,6 @@ static std::string exitCode(DWORD code) {
         : code == 0x80000003 ? " breakpoint" : code == 0xC000013A ? " console interrupt" : "";
     return std::string(hex) + name;
 }
-static std::string describeException(DWORD code, uintptr_t address, bool secondChance) {
-    char text[64];
-    std::snprintf(text, sizeof(text), "0x%08lX at 0x%llX", static_cast<unsigned long>(code), static_cast<unsigned long long>(address));
-    return std::string(text) + (code == EXCEPTION_BREAKPOINT ? " breakpoint" : code == EXCEPTION_SINGLE_STEP ? " single-step" : "")
-        + (secondChance ? " (unhandled)" : "");
-}
 static std::string line(size_t limit) {
     std::string result;
     char c;
@@ -101,6 +95,27 @@ class Launcher {
     std::string passed;
     bool registersUnread = false;
 
+    std::string describeException(DWORD code, uintptr_t address, bool secondChance) {
+        char text[64];
+        std::snprintf(text, sizeof(text), "0x%08lX at 0x%llX", static_cast<unsigned long>(code), static_cast<unsigned long long>(address));
+        auto result = std::string(text) + (code == EXCEPTION_BREAKPOINT ? " breakpoint" : code == EXCEPTION_SINGLE_STEP ? " single-step" : "")
+            + (secondChance ? " (unhandled); second-chance" : "; first-chance") + "; thread: " + std::to_string(event.dwThreadId);
+        MEMORY_BASIC_INFORMATION memory{};
+        if (!VirtualQueryEx(process.hProcess, reinterpret_cast<void*>(address), &memory, sizeof(memory))) return result + "; module: unknown";
+        auto base = reinterpret_cast<uintptr_t>(memory.AllocationBase);
+        auto found = modules.find(base);
+        std::string module = "unknown";
+        if (found != modules.end()) {
+            const auto& path = found->second;
+            int count = WideCharToMultiByte(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), nullptr, 0, nullptr, nullptr);
+            if (count > 0) {
+                module.resize(count);
+                if (!WideCharToMultiByte(CP_UTF8, 0, path.data(), static_cast<int>(path.size()), module.data(), count, nullptr, nullptr)) module = "unknown";
+            }
+        }
+        std::snprintf(text, sizeof(text), "+0x%llX", static_cast<unsigned long long>(address - base));
+        return result + "; module: " + module + text;
+    }
     [[noreturn]] void exited(DWORD code) {
         throw std::runtime_error("QQ exited before bootstrap completed (exit code " + exitCode(code) + "; stage: " + stage
             + (passed.empty() ? "" : "; last exception passed to QQ: " + passed) + ")");
@@ -230,12 +245,19 @@ class Launcher {
     void exception(DWORD& disposition) {
         auto code = event.u.Exception.ExceptionRecord.ExceptionCode;
         auto address = reinterpret_cast<uintptr_t>(event.u.Exception.ExceptionRecord.ExceptionAddress);
-        if (code == EXCEPTION_BREAKPOINT && !initialBreakpoint) { initialBreakpoint = true; return; }
+        if (code == EXCEPTION_BREAKPOINT && !initialBreakpoint) {
+            initialBreakpoint = true;
+            log("{\"stage\":\"initial_breakpoint\",\"exception\":" + quote(describeException(code, address, !event.u.Exception.dwFirstChance)) + "}");
+            return;
+        }
         if (code != EXCEPTION_SINGLE_STEP || address != watch || !watch) {
             disposition = DBG_EXCEPTION_NOT_HANDLED;
             // Ordinary first-chance exceptions (C++ throws, thread names) are QQ's own business; remember only the ones that can end it.
             const bool secondChance = !event.u.Exception.dwFirstChance;
-            if (secondChance || code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP) passed = describeException(code, address, secondChance);
+            if (secondChance || code == EXCEPTION_BREAKPOINT || code == EXCEPTION_SINGLE_STEP) {
+                passed = describeException(code, address, secondChance);
+                log("{\"stage\":\"exception_passed\",\"exception\":" + quote(passed) + "}");
+            }
             return;
         }
         auto thread = threads.at(event.dwThreadId);
@@ -249,6 +271,7 @@ class Launcher {
         } else if (!(context.Dr6 & 1)) {
             disposition = DBG_EXCEPTION_NOT_HANDLED;
             passed = describeException(code, address, false) + " not claimed (Dr6 B0 clear)";
+            log("{\"stage\":\"exception_passed\",\"exception\":" + quote(passed) + "}");
             return;
         }
         if (callback) { inject(event.dwThreadId, context); return; }
@@ -340,6 +363,7 @@ public:
             switch (event.dwDebugEventCode) {
             case CREATE_PROCESS_DEBUG_EVENT:
                 threads[event.dwThreadId] = event.u.CreateProcessInfo.hThread;
+                modules[reinterpret_cast<uintptr_t>(event.u.CreateProcessInfo.lpBaseOfImage)] = L"\\\\?\\" + qq;
                 if (event.u.CreateProcessInfo.hProcess != process.hProcess) CloseHandle(event.u.CreateProcessInfo.hProcess);
                 if (event.u.CreateProcessInfo.hFile) CloseHandle(event.u.CreateProcessInfo.hFile);
                 break;

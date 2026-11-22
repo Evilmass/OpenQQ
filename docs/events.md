@@ -6,24 +6,26 @@
 
 | 事件 | 输出 | 说明 |
 | --- | --- | --- |
-| 私聊、群聊文本 | `message` | |
+| 私聊、群聊文本 | `message`（可选 `message_sent`） | 好友私聊自动标为 `sub_type: friend`；配置 `reportSelfMessage: true` 后同时上报自身发送的 `message_sent` |
 | 群临时会话 | `message/private/group` | |
-| 图片、表情、混合消息 | `image`、`face` 等消息段 | 收图会自动触发 QQ 下载并补充本地 `path`；开启正向 WS 时附带可访问的 `url`，纯反向 WS 时补充本地路径；也可调用 `get_image` |
-| @、语音、视频、回复、JSON/XML 卡片 | 标准消息段 | 回复 ID 与消息、撤回共用同一套映射；`reply` 段只带被引用消息的 id，内容用 `get_msg` 读取 |
+| 图片、表情、骰子、猜拳、戳一戳段 | `image`、`face`、`dice`、`rps`、`poke` | 收图会自动触发 QQ 下载并补充本地 `path`（含 `summary`、`sub_type`）；开启正向 WS 或 HTTP 时附带可访问的 `url`；也可调用 `get_image`/`get_record`/`get_file` |
+| @、语音、视频、回复、JSON/XML 卡片 | 标准消息段 | 回复 ID 与消息、撤回共用同一套映射（私聊支持 `clientSeq` 回退解析）；`reply` 段只带被引用消息的 id，内容用 `get_msg` 读取 |
 | 合并转发 | `forward` 段，`data.content` 带展开后的节点 | 拉取失败时只带 `id`，可以用 `get_forward_msg` 重试 |
-| 文件、商城表情、Markdown | 扩展消息段 | 不自动下载 |
+| 文件、商城表情、Markdown | 扩展消息段 | 不自动下载，可用 `get_file` 获取 |
 | 群内戳一戳 | `notice/notify/poke` | 业务 `1061`；按 UID 解析操作者和目标 |
 | 私聊戳一戳 | `notice/notify/poke`，省略 `group_id` | OpenQQ 扩展；`user_id` 始终是操作者 |
 | 群聊/私聊撤回 | `group_recall`、`friend_recall` | 读取消息更新里的撤回元素，并关联原消息的 ID；忽略启动前的历史撤回，保留 5 秒时钟容差 |
-| 成员加入、退出、被踢、机器人被踢 | `group_increase`、`group_decrease` | 系统推送类型 `33`、`34` |
+| 成员加入、退出、被踢、机器人被踢 | `group_increase`、`group_decrease` | 系统推送类型 `33`、`34`，以及自身入群灰条 |
 | 管理员设置/取消 | `group_admin` | 系统推送 `44` |
-| 禁言、解禁、全员禁言 | `group_ban` | 来自群灰条；全员禁言时 `user_id=0` |
+| 禁言、解禁、全员禁言 | `group_ban` | 来自群灰条；全员禁言时 `user_id=0`（永久禁言归一化为 `-1`） |
 | 群文件上传 | `group_upload` | 保留客户端文件 UUID、名称、大小和业务 ID |
+| 群消息表情回应 | `group_msg_emoji_like` | 支持系统推送 `732/16` 与灰条模板 `10382` |
+| 群精华消息变更 | `essence` | 灰条业务 `2401`（`sub_type: add`） |
 | 好友新增 | `friend_add` | 来自灰条业务 `19324`，或同步结束后好友列表的变化 |
 | 好友删除 | `friend_delete`（扩展） | 来自同步结束后好友列表的差异 |
-| 群名片、头衔变化 | `group_card`、`notify/title`（扩展） | 需要先有旧值作为基线，首次加载不算变化 |
+| 群名片、头衔变化 | `group_card`、`notify/title`（扩展） | 支持成员列表差分及灰条头衔通知 |
 | 群名称变化 | `group_name`（扩展） | 群灰条类型 `5` |
-| 好友申请 | `request/friend` | 过滤已读、已处理和自己发起的记录；`flag` 为 `f:<UID>:<申请时间>`，可交给 `set_friend_add_request` 处理 |
+| 好友申请 | `request/friend` | 过滤已读、已处理和自己发起的记录；`flag` 为 `f:<UID>:<申请时间>`，可交给 `set_friend_add_request` 处理（支持 `remark`） |
 | 入群申请、邀请机器人入群 | `request/group` | 群通知 `1`、`5`、`7`，未处理状态为 `1`；`flag` 为 `g:<群号>:<通知类型>:<序号>`，可交给 `set_group_add_request` 处理；已接 V2 通知入口 |
 | 对方输入状态 | `notify/input_status`（扩展） | 接收 `onInputStatusPush`；不会主动发送输入状态 |
 | 被踢下线 | `bot_offline`（扩展） | 接收下线回调并更新运行状态 |
@@ -32,7 +34,7 @@
 
 ## 尚未适配
 
-红包运气王、群荣誉、精华消息、表情回应、个人资料点赞、公告、群待办、音视频通话、在线文件传输进度、频道事件，以及其他客户端内部的变化，都还没有逐项适配。OneBot HTTP 接口、SDK 和 MCP 也没有实现。
+红包运气王、个人资料点赞通知、群待办、音视频通话、在线文件传输进度、频道事件，以及其他客户端内部的变化，都还没有逐项适配。
 
 未识别的聊天灰条输出 `openqq_gray_tip` 扩展并保留原始元素；未识别的消息段输出 `openqq_element`。未知的服务回调只会在标准错误里输出一次 `native_callback` 参数结构摘要，不表示对应事件已经实现。频道等未适配的聊天类型同样只输出结构摘要，不保证能收到完整内容。
 

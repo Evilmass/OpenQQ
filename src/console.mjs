@@ -49,6 +49,10 @@ export function segmentPreview(segment) {
     case 'text': return data.text ?? '';
     case 'at': return data.qq === 'all' ? '@全体成员' : `@${data.qq}`;
     case 'face': return `[表情${data.id ?? ''}]`;
+    case 'dice': return `[骰子${data.result ? ' ' + data.result : ''}]`;
+    case 'rps': return `[猜拳${data.result ? ' ' + data.result : ''}]`;
+    case 'poke': return `[戳一戳]`;
+    case 'contact': return `[推荐${data.type === 'group' ? '群' : '好友'} ${data.id ?? ''}]`;
     case 'image': return '[图片]';
     case 'record': return '[语音]';
     case 'video': return '[视频]';
@@ -74,12 +78,13 @@ const sizeText = bytes => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} Mi
 
 // Returns [badge, badgeStyle, headline, body?] for one converted OneBot event.
 export function describeEvent(event) {
-  if (event.post_type === 'message') {
+  if (event.post_type === 'message' || event.post_type === 'message_sent') {
     const name = event.sender?.card || event.sender?.nickname;
     const who = name ? `${name}(${event.user_id})` : String(event.user_id);
     const body = (event.message ?? []).map(segmentPreview).join('');
-    if (event.message_type === 'group') return ['群聊', 'bgBlue white', `群 ${event.group_id} · ${who}`, body];
-    return [event.sub_type === 'group' ? '临时' : '私聊', 'bgCyan black', who, body];
+    const tag = event.post_type === 'message_sent' ? '自身' : event.message_type === 'group' ? '群聊' : event.sub_type === 'group' ? '临时' : '私聊';
+    if (event.message_type === 'group') return [tag, 'bgBlue white', `群 ${event.group_id} · ${who}`, body];
+    return [tag, 'bgCyan black', who, body];
   }
   if (event.post_type === 'request') {
     const extra = event.comment ? `「${event.comment}」` : '';
@@ -99,6 +104,8 @@ export function describeEvent(event) {
     case 'group_upload': return notice(`${group}${e.user_id} 上传文件 ${e.file?.name ?? ''}（${sizeText(e.file?.size ?? 0)}）`);
     case 'group_card': return notice(`${group}${e.user_id} 群名片 ${e.card_old || '(空)'} → ${e.card_new || '(空)'}`);
     case 'group_name': return notice(`${group}群名称改为「${e.group_name}」`);
+    case 'group_msg_emoji_like': return notice(`${group}${e.user_id || '成员'} ${e.is_add === false ? '取消了' : '回应了'}表情 ${(e.likes ?? []).map(l => l.emoji_id).join(',')} #${e.message_id || e.msg_seq || ''}`);
+    case 'essence': return notice(`${group}${e.sub_type === 'delete' ? '移出' : '设为'}精华消息 #${e.message_id || ''}`);
     case 'friend_add': return notice(`新增好友 ${e.user_id}`);
     case 'friend_delete': return notice(`好友 ${e.user_id} 已删除`);
     case 'bot_offline': return ['掉线', 'bgRed white', `账号被迫下线${e.reason ? `：${e.reason}` : ''}`];

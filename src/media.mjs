@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { lookup } from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
@@ -131,6 +131,25 @@ export function wavToPcm(bytes, info, rate = 24000) {
   return out;
 }
 
+export function pcmToWav(pcm, sampleRate = 24000, channels = 1, bits = 16) {
+  const bytes = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + bytes.length, 4);
+  header.write('WAVE', 8, 'latin1');
+  header.write('fmt ', 12, 'latin1');
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * (bits / 8), 28);
+  header.writeUInt16LE(channels * (bits / 8), 32);
+  header.writeUInt16LE(bits, 34);
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(bytes.length, 40);
+  return Buffer.concat([header, bytes]);
+}
+
 // ISO base media (MP4 / MOV): duration from mvhd, size from the first video track's tkhd. Only box headers are read
 // from disk, because moov is often at the end of a large file.
 export async function videoInfo(path) {
@@ -234,13 +253,29 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   if (typeof dir !== 'string' || !dir) throw new TypeError('媒体临时目录必须指定');
   const max = { ...defaultLimits, ...limits };
 
-  async function tempFile(extension = '') {
+  async function tempFile(extension = '', prefix = '') {
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    return join(dir, randomBytes(12).toString('hex') + extension);
+    return join(dir, prefix + randomBytes(12).toString('hex') + extension);
   }
 
-  function download(first, kind, track) {
+  function safeHeaders(input) {
+    const out = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) OpenQQ/1.0 Safari/537.36', Accept: '*/*' };
+    if (!input) return out;
+    const allow = new Set(['user-agent', 'referer', 'accept', 'accept-language']);
+    const entries = Array.isArray(input)
+      ? input.map(line => { const i = String(line).indexOf('='); const c = String(line).indexOf(':'); const sep = c > 0 && (i < 0 || c < i) ? c : i; return sep > 0 ? [String(line).slice(0, sep), String(line).slice(sep + 1)] : null; }).filter(Boolean)
+      : typeof input === 'object' ? Object.entries(input) : [];
+    for (const [k, v] of entries) {
+      const key = String(k).trim().toLowerCase();
+      const val = String(v ?? '').trim();
+      if (allow.has(key) && val && val.length <= 512 && !/[\r\n\0]/.test(val)) out[key] = val;
+    }
+    return out;
+  }
+
+  function download(first, kind, track, customHeaders) {
     const limit = max[kind];
+    const headers = safeHeaders(customHeaders);
     return new Promise((resolveOuter, rejectOuter) => {
       let hops = 0, current, deadline;
       const resolve = value => { clearTimeout(deadline); resolveOuter(value); };
@@ -254,7 +289,7 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) { reject(fail('下载地址必须是不带账号的 http(s) 链接')); return; }
         const literal = url.hostname.replace(/^\[|\]$/g, '');
         if (net.isIP(literal) && !allowPrivate && isBlockedAddress(literal)) { reject(fail('下载地址指向本机或内网')); return; }
-        const request = (url.protocol === 'https:' ? https : http).get(url, { lookup: guarded, timeout: timeoutMs, headers: { 'User-Agent': 'OpenQQ', Accept: '*/*' } }, response => {
+        const request = (url.protocol === 'https:' ? https : http).get(url, { lookup: guarded, timeout: timeoutMs, headers }, response => {
           handle(url, response).catch(error => reject(error.retcode ? error : fail('下载失败：' + error.message)));
         });
         current = request;
@@ -265,7 +300,7 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
         const status = response.statusCode ?? 0;
         if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
           response.resume();
-          if (++hops > 3) throw fail('下载重定向次数过多');
+          if (++hops > 5) throw fail('下载重定向次数过多');
           let next;
           try { next = new URL(response.headers.location, url); } catch { throw fail('下载重定向地址无效'); }
           get(next);
@@ -296,21 +331,23 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   }
 
   // Resolves one `file` value into a regular local file. Temporary files are reported through `track` for cleanup.
-  async function resolveSource(value, kind, track) {
+  async function resolveSource(value, kind, track, customHeaders) {
     if (typeof value !== 'string' || !value.trim()) throw fail(`${kind} 段缺少 file`);
     const source = value.trim();
     const limit = max[kind];
     const dataUri = source.match(/^data:[^;,]+;base64,([\s\S]+)$/i);
     if (source.startsWith('base64://') || dataUri) {
-      const text = (dataUri ? dataUri[1] : source.slice(9)).replace(/\s+/g, '');
-      if (!text || !/^[A-Za-z0-9+/]+={0,2}$/.test(text) || text.length % 4 !== 0) throw fail('base64 数据无效');
+      let text = (dataUri ? dataUri[1] : source.slice(9)).replace(/\s+/g, '').replaceAll('-', '+').replaceAll('_', '/');
+      if (!text || text.length % 4 === 1) throw fail('base64 数据无效');
+      if (text.length % 4 !== 0) text += '='.repeat(4 - (text.length % 4));
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(text)) throw fail('base64 数据无效');
       if (text.length / 4 * 3 > limit + 3) throw fail(`文件超过 ${limit / MiB} MiB 上限`);
       const path = await tempFile();
       track(path);
       await writeFile(path, Buffer.from(text, 'base64'), { mode: 0o600 });
       return { path, name: '' };
     }
-    if (/^https?:\/\//i.test(source)) return download(source, kind, track);
+    if (/^https?:\/\//i.test(source)) return download(source, kind, track, customHeaders);
     let path;
     if (/^file:/i.test(source)) {
       let url;
@@ -342,7 +379,7 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   }
 
   async function image(data, track) {
-    const source = await resolveSource(data.file ?? data.url, 'image', track);
+    const source = await resolveSource(data.file ?? data.url ?? data.path, 'image', track);
     const size = await sizeChecked(source.path, 'image');
     const info = imageInfo(await readHead(source.path, MiB));
     if (!info || !(info.width > 0) || !(info.height > 0)) throw fail('不是支持的图片（png、jpeg、gif、webp、bmp）');
@@ -357,7 +394,7 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   }
 
   async function record(data, track) {
-    const source = await resolveSource(data.file ?? data.url, 'record', track);
+    const source = await resolveSource(data.file ?? data.url ?? data.path, 'record', track);
     await sizeChecked(source.path, 'record');
     const bytes = await readHead(source.path, max.record);
     let path = source.path;
@@ -386,7 +423,7 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   }
 
   async function video(data, track) {
-    const source = await resolveSource(data.file ?? data.url, 'video', track);
+    const source = await resolveSource(data.file ?? data.url ?? data.path, 'video', track);
     const size = await sizeChecked(source.path, 'video');
     const info = await videoInfo(source.path).catch(() => null);
     if (!info) throw fail('不是可识别的 MP4/MOV 视频（目前只支持这两种封装）');
@@ -408,12 +445,32 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
   }
 
   async function file(data, track) {
-    const source = await resolveSource(data.file ?? data.url, 'file', track);
+    const source = await resolveSource(data.file ?? data.url ?? data.path, 'file', track);
     const size = await sizeChecked(source.path, 'file');
     return { kind: 'file', path: source.path, name: safeName(data.name ?? source.name, 'file'), size };
   }
 
   const builders = { image, record, video, file };
+
+  async function prepareSegments(segments, track, state) {
+    const message = [];
+    for (const segment of segments) {
+      if (!segment || typeof segment !== 'object' || typeof segment.data !== 'object' || segment.data === null || Array.isArray(segment.data)) { message.push(segment); continue; }
+      const { openqq_media: ignored, ...data } = segment.data;
+      if (!mediaTypes.has(segment.type)) { message.push({ ...segment, data }); continue; }
+      if (++state.count > 20) throw fail('一条消息最多包含 20 个媒体段');
+      const prepared = await builders[segment.type](data, track);
+      // The native side reads only openqq_media (and image summary / sub_type). Everything else the client sent, above all a base64:// source
+      // that can be megabytes, must not travel on in the IPC frame, which is capped at 1 MiB.
+      const extra = segment.type === 'image' ? {
+        ...(typeof data.summary === 'string' ? { summary: data.summary.slice(0, 64) } : {}),
+        ...(data.sub_type !== undefined ? { sub_type: data.sub_type } : {}),
+      } : {};
+      message.push({ ...segment, data: { ...extra, openqq_media: prepared } });
+    }
+    return message;
+  }
+
   return {
     // Returns { params, release }. Incoming `openqq_media` fields are always discarded: only this function may set them.
     async prepare(params) {
@@ -422,21 +479,102 @@ export function createMediaPreparer({ dir, allowPrivate = process.env.OPENQQ_MED
       const release = async () => { await Promise.all(created.splice(0).map(path => rm(path, { force: true }).catch(() => {}))); };
       if (!Array.isArray(params?.message)) return { params, release };
       try {
-        let count = 0;
-        const message = [];
-        for (const segment of params.message) {
-          if (!segment || typeof segment !== 'object' || typeof segment.data !== 'object' || segment.data === null || Array.isArray(segment.data)) { message.push(segment); continue; }
-          const { openqq_media: ignored, ...data } = segment.data;
-          if (!mediaTypes.has(segment.type)) { message.push({ ...segment, data }); continue; }
-          if (++count > 20) throw fail('一条消息最多包含 20 个媒体段');
-          const prepared = await builders[segment.type](data, track);
-          // The native side reads only openqq_media (and the image summary). Everything else the client sent, above all a base64:// source
-          // that can be megabytes, must not travel on in the IPC frame, which is capped at 1 MiB.
-          const summary = segment.type === 'image' && typeof data.summary === 'string' ? { summary: data.summary.slice(0, 64) } : {};
-          message.push({ ...segment, data: { ...summary, openqq_media: prepared } });
-        }
+        const message = await prepareSegments(params.message, track, { count: 0 });
         return { params: { ...params, message }, release };
       } catch (error) { await release(); throw error; }
+    },
+    async prepareForward(params) {
+      const created = [];
+      const track = path => created.push(path);
+      const release = async () => { await Promise.all(created.splice(0).map(path => rm(path, { force: true }).catch(() => {}))); };
+      if (!Array.isArray(params?.messages)) return { params, release };
+      try {
+        const state = { count: 0 };
+        const messages = [];
+        for (const node of params.messages) {
+          if (!node || typeof node !== 'object' || node.type !== 'node' || !node.data || typeof node.data !== 'object' || Array.isArray(node.data)) {
+            messages.push(node); continue;
+          }
+          const { openqq_media: ignored, ...data } = node.data;
+          if (Array.isArray(data.content)) {
+            messages.push({ ...node, data: { ...data, content: await prepareSegments(data.content, track, state) } });
+          } else if (data.content === undefined && Array.isArray(data.message)) {
+            messages.push({ ...node, data: { ...data, content: await prepareSegments(data.message, track, state) } });
+          } else {
+            messages.push({ ...node, data });
+          }
+        }
+        return { params: { ...params, messages }, release };
+      } catch (error) { await release(); throw error; }
+    },
+    async prepareSingle(kind, data) {
+      if (!builders[kind]) throw fail('不支持的媒体类型：' + kind);
+      const created = [];
+      const track = path => created.push(path);
+      const release = async () => { await Promise.all(created.splice(0).map(path => rm(path, { force: true }).catch(() => {}))); };
+      try {
+        const media = await builders[kind](data ?? {}, track);
+        return { media, release };
+      } catch (error) { await release(); throw error; }
+    },
+    async decodeRecord(filePath, outFormat, track = () => {}) {
+      if (!outFormat) return { path: filePath, converted: false };
+      const bytes = await readHead(filePath, max.record);
+      const isSilk = Boolean(silkInfo(bytes));
+      if ((outFormat === 'silk' || outFormat === 'amr') && isSilk) return { path: filePath, converted: false };
+      if (outFormat === 'wav' && wavInfo(bytes)) return { path: filePath, converted: false };
+      let inputForFfmpeg = filePath;
+      if (isSilk) {
+        const decoded = await (await silk()).decode(bytes, 24000);
+        if (outFormat === 'pcm') {
+          const out = await tempFile('.pcm');
+          track(out);
+          await writeFile(out, decoded.data, { mode: 0o600 });
+          return { path: out, converted: true };
+        }
+        const wavPath = await tempFile('.wav');
+        track(wavPath);
+        await writeFile(wavPath, pcmToWav(decoded.data, 24000), { mode: 0o600 });
+        if (outFormat === 'wav') return { path: wavPath, converted: true };
+        inputForFfmpeg = wavPath;
+      }
+      const out = await tempFile('.' + outFormat);
+      track(out);
+      const args = outFormat === 'pcm'
+        ? ['-v', 'error', '-i', inputForFfmpeg, '-f', 's16le', '-ar', '24000', '-ac', '1', '-y', out]
+        : ['-v', 'error', '-i', inputForFfmpeg, '-y', out];
+      try { await runProcess(ffmpeg, args); }
+      catch (error) {
+        if (error.code === 'ENOENT') throw fail(`转换语音到 ${outFormat} 需要在本机安装 ffmpeg（或设置 OPENQQ_FFMPEG）`);
+        throw fail('语音转码失败：' + error.message);
+      }
+      return { path: out, converted: true };
+    },
+    async downloadToFile({ url, base64, name, headers } = {}) {
+      const hasUrl = typeof url === 'string' && url.trim();
+      const hasBase64 = typeof base64 === 'string' && base64.trim();
+      if (!hasUrl && !hasBase64) throw fail('download_file 需要提供 url 或 base64');
+      const sourceInput = hasBase64
+        ? (base64.trim().startsWith('base64://') || /^data:[^;,]+;base64,/i.test(base64.trim()) ? base64.trim() : 'base64://' + base64.trim())
+        : url.trim();
+      if (!hasBase64 && !/^https?:\/\//i.test(sourceInput)) throw fail('download_file 的 url 必须是 http(s) 链接');
+      const created = [];
+      const track = path => created.push(path);
+      try {
+        const resolved = await resolveSource(sourceInput, 'file', track, headers);
+        await sizeChecked(resolved.path, 'file');
+        const desired = typeof name === 'string' && name.trim() ? safeName(name.trim(), '') : '';
+        if (desired) {
+          const ext = extname(desired).slice(0, 16).replace(/[^.\w]/g, '');
+          const dest = await tempFile(ext, 'dl_');
+          await rename(resolved.path, dest);
+          return { file: dest };
+        }
+        return { file: resolved.path };
+      } catch (error) {
+        await Promise.all(created.map(p => rm(p, { force: true }).catch(() => {})));
+        throw error;
+      }
     },
     // Best-effort removal of leftovers from an earlier crashed run.
     async sweep(olderThanMs = 3600000) {

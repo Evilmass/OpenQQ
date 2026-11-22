@@ -37,13 +37,14 @@ npm run init
   - HTTP Header：`Authorization: Bearer <accessToken>`
   - URL 查询参数：`?access_token=<accessToken>`
 - 路径：`/` 同时收事件、发动作；`/api` 只处理动作，不推送事件；`/event` 只推送事件，会忽略收到的动作。
-- 连接成功且账号就绪后会推送 `lifecycle`（`connect`）；QQ 登录成功后会发送 `meta_event` / `heartbeat`。心跳间隔固定 15 秒（`interval: 15000`），正向和反向连接都一样，目前不能配置。
+- 连接成功且账号就绪后会推送 `lifecycle`（`connect`）；QQ 登录成功后会发送 `meta_event` / `heartbeat`。心跳间隔默认 15 秒（可在配置中用 `heartbeatInterval` 设置 `1000..600000` 毫秒），正向和反向连接共用。WebSocket 动作同样支持 `_async` 与 `_rate_limited` 后缀。
 - 限流：同一来源 IP 在 60 秒内连续鉴权失败超过 20 次，会返回 `429 Too Many Requests`。
 
 ### 反向 WebSocket
 
 - 请求头带 `X-Self-ID` 和 `X-Client-Role: Universal`；如果给这个连接单独配了密钥，还会带 `Authorization: Bearer <token>`。
-- 至少要启用一种接入方式（正向 / 反向 WebSocket、HTTP 服务、HTTP 上报）。反向连接断开后，只要 QQ 会话仍然就绪，就每隔 3 秒自动重连，直到成功；QQ 未就绪时只等待，就绪后再连。这个间隔目前不能配置。
+- 至少要启用一种接入方式（正向 / 反向 WebSocket、HTTP 服务、HTTP 上报）。反向连接断开后，只要 QQ 会话仍然就绪，就每隔 3 秒自动重连（可在配置中用 `reconnectInterval` 设置 `500..300000` 毫秒），直到成功；QQ 未就绪时只等待，就绪后再连。
+- 如需上报自己发出的消息事件（`post_type: "message_sent"`），可在 `config/openqq.json` 中设置 `"reportSelfMessage": true`。
 
 ### HTTP 服务
 
@@ -85,6 +86,32 @@ OneBot v11 的快速操作可以在两处使用：HTTP 上报的响应体，以�
 | 入群请求 | `approve`、`reason` | `set_group_add_request` |
 
 请求只有明确写了 `approve` 才会被处理，不会因为空响应而默认同意。通知和心跳事件不支持快速操作。
+
+## SDK 与 MCP 接入
+
+### Node.js / TypeScript SDK（`src/sdk.mjs`）
+
+OpenQQ 内置零额外依赖的 ESM SDK（带完整类型声明 `src/sdk.d.ts`），同时支持 HTTP 与 WebSocket（自动重连、事件分发、链式消息构建器 `msg()`）：
+
+```js
+import { OpenQQClient, msg } from './src/sdk.mjs';
+
+const client = new OpenQQClient({ url: 'ws://127.0.0.1:3001/', token: process.env.ONEBOT_TOKEN });
+client.on('message.group', async event => {
+  if (event.raw_message === '/ping') {
+    await client.sendGroupMsg(event.group_id, msg().reply(event.message_id).text('pong'));
+  }
+});
+await client.connect();
+```
+
+### MCP Server（AI Agent 接入）
+
+运行 `npm run mcp`（或 `node src/mcp.mjs`）可启动标准 JSON-RPC 2.0 stdio MCP 服务，供 Claude Desktop、Cursor 等 AI 客户端直接查询与调用 OpenQQ 动作：
+
+- 自动读取 `OPENQQ_URL` / `OPENQQ_TOKEN` 环境变量，未指定时自动回退读取 `config/openqq.json`。
+- 提供 `openqq://onebot/actions` 资源与 `list_actions`、`query_action`、`invoke_action` 三个工具。
+- 安全策略：默认阻止敏感凭据动作（`get_cookies`、`get_csrf_token`、`get_credentials`、`get_clientkey`），可通过 `OPENQQ_MCP_READONLY=1` 启用只读模式，或通过 `OPENQQ_MCP_ALLOW_ACTIONS` / `OPENQQ_MCP_DENY_ACTIONS` / `OPENQQ_MCP_ALLOW_SENSITIVE=1` 精细控制权限。
 
 ## 运行示例机器人
 

@@ -42,6 +42,7 @@ function createReleaseMetadata() {
       doctor: 'node src/main.mjs doctor',
       start: 'node src/main.mjs start',
       webui: 'node src/main.mjs webui',
+      mcp: 'node src/mcp.mjs',
     },
   };
   writeOut('package.json', JSON.stringify(runtimePkg, null, 2) + '\n');
@@ -157,6 +158,22 @@ async function main() {
   });
   const mainOut = mainBundle.outputFiles[0].text;
   writeOut('src/main.mjs', mainOut);
+
+  // 1b. MCP server entrypoint (ESM bundle including ws + SDK + action catalog).
+  const mcpBundle = await build({
+    absWorkingDir: root,
+    entryPoints: ['src/mcp.mjs'],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node',
+    target: ['node22'],
+    minify: true,
+    legalComments: 'none',
+    banner: { js: 'import { createRequire as __openqqCreateRequire } from "node:module"; const require = __openqqCreateRequire(import.meta.url);' },
+  });
+  const mcpOut = mcpBundle.outputFiles[0].text;
+  writeOut('src/mcp.mjs', mcpOut);
 
   // 2. Native QQ session payload (CJS bundle loaded inside QQNT's Node runtime).
   const sessionBundle = await build({

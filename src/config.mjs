@@ -54,6 +54,15 @@ export function validateConfig(value) {
     return { enabled: item.enabled, url: url.href, secret };
   });
   if (!value.ws.enabled && !reverseWs.some(item => item.enabled) && !http.enabled && !httpPost.some(item => item.enabled)) fail('请至少启用一种接入方式');
+  if (value.heartbeatInterval !== undefined && (!Number.isInteger(value.heartbeatInterval) || value.heartbeatInterval < 1000 || value.heartbeatInterval > 600000)) {
+    fail('heartbeatInterval 必须为 1000..600000 毫秒');
+  }
+  if (value.reconnectInterval !== undefined && (!Number.isInteger(value.reconnectInterval) || value.reconnectInterval < 500 || value.reconnectInterval > 300000)) {
+    fail('reconnectInterval 必须为 500..300000 毫秒');
+  }
+  if (value.reportSelfMessage !== undefined && typeof value.reportSelfMessage !== 'boolean') {
+    fail('reportSelfMessage 必须为布尔值');
+  }
   return {
     version: 1,
     qqRoot: value.qqRoot.trim(),
@@ -63,6 +72,9 @@ export function validateConfig(value) {
     reverseWs,
     http: { enabled: http.enabled, host: http.host, port: http.port },
     httpPost,
+    ...(value.heartbeatInterval !== undefined ? { heartbeatInterval: value.heartbeatInterval } : {}),
+    ...(value.reconnectInterval !== undefined ? { reconnectInterval: value.reconnectInterval } : {}),
+    ...(value.reportSelfMessage !== undefined ? { reportSelfMessage: value.reportSelfMessage } : {}),
   };
 }
 

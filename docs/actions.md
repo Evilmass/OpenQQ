@@ -2,7 +2,7 @@
 
 改了代码后要重启：Ctrl+C 停掉 OpenQQ，手动退出 QQ，再执行 `npm start`。登录后等到「QQ 会话就绪」，就可以在终端底部的提示符里输入动作并回车。输入时收到的事件会打印在提示符上方，不会打断正在输入的内容。
 
-动作可以从终端标准输入、本机 WebUI、OneBot v11 正向和反向 WebSocket 发出，配置见 [connect.md](connect.md)。还没有 OneBot HTTP 动作服务。
+动作可以从终端标准输入、本机 WebUI、OneBot v11 正向/反向 WebSocket、HTTP API、官方 SDK（`src/sdk.mjs`）或 MCP 服务（`npm run mcp`）发出，配置见 [connect.md](connect.md)。
 
 ## 快捷命令
 
@@ -30,14 +30,15 @@
 
 | 类别 | 动作 |
 | --- | --- |
-| 发送 | `send_private_msg`、`send_group_msg`、`send_msg` |
-| 消息 | `get_msg`、`get_forward_msg`、`get_image`、`delete_msg`（撤回）、`set_msg_emoji_like`（表情回应） |
-| 群管理 | `set_group_kick`、`set_group_ban`、`set_group_whole_ban`、`set_group_admin`、`set_group_card`、`set_group_name`、`set_group_leave`、`set_group_add_request` |
-| 好友 | `set_friend_add_request`、`send_like` |
-| 查询 | `get_friend_list`、`get_group_list`、`get_group_info`、`get_group_member_list`、`get_group_member_info`、`get_stranger_info`、`get_login_info`、`get_status`、`get_version_info`、`can_send_image`、`can_send_record` |
-| 扩展 | `set_input_status`、`generate_image`（生图）、`clean_cache`、`.handle_quick_operation`（快速操作，见 [connect.md](connect.md)） |
+| 发送与转发 | `send_private_msg`、`send_group_msg`、`send_msg`、`send_group_forward_msg`、`send_private_forward_msg`、`send_forward_msg`、`forward_group_single_msg`、`forward_friend_single_msg`、`send_poke`、`group_poke`、`friend_poke` |
+| 消息与媒体 | `get_msg`、`get_forward_msg`、`get_group_msg_history`、`get_friend_msg_history`、`delete_msg`、`mark_msg_as_read`、`mark_group_msg_as_read`、`mark_private_msg_as_read`、`_mark_all_as_read`、`get_image`、`get_record`、`get_file`、`fetch_ptt_text`（语音转文字）、`set_msg_emoji_like`（别名 `set_group_reaction`）、`fetch_emoji_like` |
+| 群管理与公告 | `set_group_kick`、`set_group_kick_members`、`set_group_ban`、`set_group_whole_ban`、`set_group_admin`、`set_group_card`、`set_group_name`、`set_group_remark`、`set_group_portrait`、`set_group_leave`、`set_group_add_request`、`set_essence_msg`、`delete_essence_msg`、`get_essence_msg_list`、`_get_group_notice`、`_send_group_notice`、`_del_group_notice` |
+| 群文件与私聊文件 | `upload_group_file`、`upload_private_file`、`get_group_file_system_info`、`get_group_root_files`、`get_group_files_by_folder`、`create_group_file_folder`、`rename_group_file_folder`、`delete_group_folder`、`delete_group_file`、`trans_group_file`、`get_group_file_url` |
+| 账号与好友 | `get_login_info`、`get_status`、`get_version_info`、`can_send_image`、`can_send_record`、`get_friend_list`、`get_friends_with_category`、`get_stranger_info`、`get_recent_contact`、`set_friend_add_request`、`set_friend_remark`、`delete_friend`、`send_like`、`set_qq_profile`、`set_self_longnick`、`set_qq_avatar`、`set_online_status`、`fetch_custom_face`、`get_clientkey`、`get_cookies`、`get_csrf_token`、`get_credentials` |
+| 群查询 | `get_group_list`、`get_group_info`、`get_group_detail_info`（别名 `get_group_info_ex`）、`get_group_member_list`、`get_group_member_info`、`get_group_at_all_remain`、`get_group_shut_list`、`get_group_honor_info`、`get_group_system_msg`、`get_group_share_link` |
+| 扩展与工具 | `set_input_status`、`download_file`、`clean_cache`、`check_url_safely`、`nc_get_packet_status`、`ArkSharePeer`、`ArkShareGroup`、`generate_image`（生图）、`.handle_quick_operation`（快速操作，见 [connect.md](connect.md)） |
 
-没有列出的动作返回 `1404`。这个版本的 QQ 没有提供戳一戳发送和设置群头衔的接口，所以 `send_poke` 和 `set_group_special_title` 不在其中。
+完整动作清单与安全级别见 [src/action-catalog.mjs](../src/action-catalog.mjs)。没有列出的动作返回 `1404`。QQ `wrapper.node` 未公开设置群头衔、匿名禁言和图片 OCR 接口，因此 `set_group_special_title`、`set_group_anonymous_ban` 不在其中。
 
 ```json
 {"action":"send_private_msg","params":{"user_id":123456789,"message":"你好","auto_escape":true},"echo":"send-1"}
@@ -62,14 +63,17 @@
 | `at` | `qq` 为 QQ 号或 `all`；只能用于群聊。`name` 可选，用来指定显示的名字，不填则取群名片或昵称 |
 | `face` | `id` 为 QQ 表情编号 |
 | `dice`、`rps` | 骰子、猜拳 |
-| `reply` | 引用一条消息。`data.id` 是本次运行期间收到或发出的 `message_id`；只能引用同一会话里的消息，每条消息最多一个引用，发送时自动放到最前面 |
-| `image` | 图片，见下面「媒体来源」。可选 `summary`（最多 64 个字符） |
+| `reply` | 引用一条消息。`data.id` 是本次运行期间收到或发出的 `message_id`（也支持 `data.seq` 按消息序号引用）；只能引用同一会话里的消息，每条消息最多一个引用，发送时自动放到最前面 |
+| `image` | 图片，见下面「媒体来源」。可选 `summary`（最多 64 个字符）、`sub_type`（图片子类型，如表情包） |
 | `record` | 语音，必须单独发送 |
 | `video` | 视频，必须单独发送；需要封面，见下面 |
 | `file` | 文件，必须单独发送；可选 `name` 指定文件名 |
 | `json` | 应用（Ark）卡片，`data.data` 为 JSON 对象或其字符串；必须单独发送。QQ 会校验卡片签名，没签名或签名过期的卡片可能被拒绝 |
+| `mface` | 商城表情，需提供 `emoji_id`、`emoji_package_id`，可选 `key`、`summary` |
+| `markdown` | Markdown 文本，需提供 `content`（受 QQ 权限策略约束） |
+| `contact` | 推荐好友或群名片卡片，`type` 为 `qq` 或 `group`，`id` 为对应号码；必须单独发送 |
 
-文本总大小不超过 64 KiB，一条消息最多 20 个媒体段。音乐卡片、商城表情、Markdown、合并转发（node）、分享、位置等其他消息段暂不支持，会返回 `1400` 并写明是哪一种。
+文本总大小不超过 64 KiB，一条消息最多 20 个媒体段。发送合并转发请使用 `send_group_forward_msg` / `send_private_forward_msg` / `send_forward_msg`（支持引用 `node.data.id` 与自定义 `node.data.content`）。音乐卡片、分享、位置等其他消息段暂不支持，会返回 `1400` 并写明是哪一种。
 
 ## 媒体来源
 
@@ -93,7 +97,7 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 
 下载链接的规则：
 
-- 最多跟随 3 次重定向，每次都重新检查地址；
+- 最多跟随 5 次重定向，每次都重新检查地址；
 - 默认拒绝指向本机、内网、链路本地和运营商级 NAT 的地址（包括解析到这些地址的域名），防止通过 OpenQQ 访问内部服务。需要时可设置环境变量 `OPENQQ_MEDIA_ALLOW_PRIVATE=1` 放开；
 - 使用 Clash 等 fake-ip 模式的 DNS 时域名会解析成 `198.18.x.x`，这个网段不受限制，下载正常；
 - 下载、base64 解码和转码产生的临时文件放在 `.runtime/media/`，动作结束后删除，启动时清掉一小时前的残留。你自己的本地文件不会被删除。
@@ -209,16 +213,14 @@ ffmpeg 取自 `PATH`，也可以用环境变量 `OPENQQ_FFMPEG` 指定。`silk-w
 
 普通动作最多等 15 秒左右（带媒体的发送见上面），IPC 另有兜底超时。OpenQQ 不会自动重发；超时或断线之后，请先在 QQ 里确认消息有没有发出去。重新登录、会话重建或退出 OpenQQ 会阻止还没提交的旧动作，但已经交给 QQ 的发送没法靠断开 IPC 撤回。
 
-`get_login_info` 目前返回账号的 QQ 号，昵称是空字符串。`get_status` 目前只反映原生会话是否可用，没有做完整的网络连通性探测。
+`get_login_info` 会自动从 QQ 资料服务获取并缓存当前账号昵称。`get_status` 反映原生会话是否可用。
 
 ## 测试情况
 
-所有动作都已在 QQ `9.9.37-54395` 上用测试群和测试账号实测。有两点以客户端显示为准：`send_like` 返回成功但无法读回；关闭全员禁言时 QQ 返回成功，但不会推送通知。
-
-参数校验、UID 转换、并发回执匹配、媒体处理、超时和断线保护都有自动测试。
+核心协议、历史记录、合并转发、群文件/精华/公告、媒体转码、SDK 与 MCP 均包含自动化单元测试，并在 QQ `9.9.37-54395` 上验证了原生服务导出签名。
 
 ## 尚未实现
 
-戳一戳发送、设置群头衔（这个版本的 QQ 没有现成接口）、音乐卡片、合并转发发送、匿名相关动作、群荣誉等。
+需要底层原始 SSO/OIDB 封包注入的能力目前不在纯 `wrapper.node` 桥接范围内：设置群专属头衔（`set_group_special_title`）、图片 OCR（`ocr_image`）、匿名相关动作与音乐卡片签名。
 
 协议字段参考 [OneBot v11 公开 API](https://github.com/botuniverse/onebot-11/blob/master/api/public.md)。输入状态、申请 `flag` 的格式是 OpenQQ 的扩展。

@@ -13,19 +13,22 @@ const POST_CONCURRENCY = 4;
 const POST_QUEUE = 256;
 const POST_RESPONSE_LIMIT = 1024 * 1024;
 // Form and query values are strings; these parameters are booleans in OneBot.
-const BOOLEAN_PARAMS = new Set(['auto_escape', 'approve', 'reject_add_request', 'enable', 'is_dismiss', 'no_cache']);
+const BOOLEAN_PARAMS = new Set([
+  'auto_escape', 'approve', 'reject_add_request', 'enable', 'is_dismiss', 'no_cache',
+  'set', 'is_add', 'reverseOrder', 'reverse_order', 'temp_block', 'temp_both_del', 'pinned',
+]);
 const ACTION_NAME = /^\.?[A-Za-z0-9_]{1,64}$/;
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const failure = (retcode, message) => ({ status: 'failed', retcode, data: null, message });
 
-// Query strings and forms only carry strings: restore booleans, and a message given as a JSON array of segments.
+// Query strings and forms only carry strings: restore booleans, and JSON arrays (message / messages / user_id).
 function coerceParams(entries) {
   const params = {};
   for (const [key, value] of entries) {
     if (key === 'access_token') continue;
     if (BOOLEAN_PARAMS.has(key) && (value === 'true' || value === 'false')) params[key] = value === 'true';
-    else if (key === 'message' && value.startsWith('[{')) {
+    else if ((key === 'message' || key === 'messages' || key === 'user_id') && value.startsWith('[')) {
       try { const parsed = JSON.parse(value); params[key] = Array.isArray(parsed) ? parsed : value; } catch { params[key] = value; }
     } else params[key] = value;
   }
@@ -102,6 +105,8 @@ export async function startOneBot({ config, dispatch, onStatus = () => {}, maxPa
   // Event receivers that get every message, notice and request as an HTTP POST (OneBot v11 "HTTP POST").
   const posters = (config.httpPost ?? []).filter(item => item.enabled).map(item => ({ ...item, state: 'waiting', queue: [], active: 0, dropped: 0 }));
   const httpEnabled = config.http?.enabled === true;
+  const heartbeatInterval = Number.isInteger(config.heartbeatInterval) && config.heartbeatInterval >= 1000 ? config.heartbeatInterval : 15000;
+  const reconnectInterval = Number.isInteger(config.reconnectInterval) && config.reconnectInterval >= 500 ? config.reconnectInterval : 3000;
   const authFailures = new Map();
   const mediaMap = new Map();
   const mediaByPath = new Map();
@@ -268,8 +273,15 @@ export async function startOneBot({ config, dispatch, onStatus = () => {}, maxPa
       const fail = (retcode, message) => ({ status: 'failed', retcode, data: null, message, ...(Object.hasOwn(request, 'echo') ? { echo: request.echo } : {}) });
       if (peer.active >= 8) { send(socket, fail(1503, '并发动作过多')); return; }
       if (!ready()) { send(socket, fail(1502, 'QQ 尚未就绪')); return; }
+      const suffix = /_(async|rate_limited)$/.exec(request.action);
+      const effective = suffix ? { ...request, action: request.action.slice(0, -suffix[0].length) } : request;
       peer.active++;
-      try { send(socket, await execute(request)); }
+      if (suffix?.[1] === 'async') {
+        send(socket, { status: 'async', retcode: 1, data: null, ...(Object.hasOwn(request, 'echo') ? { echo: request.echo } : {}) });
+        execute(effective).catch(() => {}).finally(() => { peer.active--; });
+        return;
+      }
+      try { send(socket, await execute(effective)); }
       catch { send(socket, fail(1500, '动作执行异常')); }
       finally { peer.active--; }
     });
@@ -293,7 +305,7 @@ export async function startOneBot({ config, dispatch, onStatus = () => {}, maxPa
       item.socket = null;
       if (closed || !ready()) { item.state = 'waiting'; report(); return; }
       item.state = 'reconnecting'; report();
-      item.timer = setTimeout(() => { item.timer = null; connect(item); }, 3000);
+      item.timer = setTimeout(() => { item.timer = null; connect(item); }, reconnectInterval);
     });
   }
   async function serveMedia(req, res) {
@@ -371,9 +383,9 @@ export async function startOneBot({ config, dispatch, onStatus = () => {}, maxPa
     for (const [socket, peer] of peers) {
       if (!peer.alive) { socket.terminate(); continue; }
       peer.alive = false; socket.ping();
-      if (Number(state.self_id) > 0 && peer.role !== 'api') send(socket, meta({ meta_event_type: 'heartbeat', interval: 15000, status: { online: ready(), good: ready() } }));
+      if (Number(state.self_id) > 0 && peer.role !== 'api') send(socket, meta({ meta_event_type: 'heartbeat', interval: heartbeatInterval, status: { online: ready(), good: ready() } }));
     }
-  }, 15000);
+  }, heartbeatInterval);
   heartbeat.unref();
   report();
   return {

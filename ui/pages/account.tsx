@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, CircleAlert, Copy, History, Info, LoaderCircle, LogIn, Play, RefreshCw } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { describeLog } from '../format.mjs';
@@ -63,6 +63,14 @@ export default function Account() {
     catch (error) { toast.error('获取失败', (error as Error).message); }
     finally { setBusy(false); }
   }
+  useEffect(() => {
+    if (!ready || !state.self_id) return;
+    let active = true;
+    request<ActionResponse>('/api/action', { action: 'get_login_info', echo: 'webui-auto' })
+      .then(response => { if (active && response.status === 'ok') setInfo(response); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [ready, state.self_id]);
   async function start() {
     setStarting(true);
     try { const result = await request<{ message: string }>('/api/start', {}); toast.success('正在启动', result.message); client.invalidateQueries({ queryKey: ['config'] }); }

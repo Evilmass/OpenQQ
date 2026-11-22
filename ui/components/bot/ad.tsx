@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties, type PointerEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Megaphone } from 'lucide-react';
+import { ExternalLink, Megaphone, Sparkles } from 'lucide-react';
 import { request } from '../../lib/api';
 import { useAds, type AdSettings } from '../../lib/bot';
 import { Badge } from '../ui/badge';
@@ -14,16 +14,37 @@ import { toast } from '../ui/toast';
  * 「广告」标记写死在这里，不受设置影响，让人一眼看出这是推广内容而不是 OpenQQ 自己的提示。
  */
 export function AdBanner({ ad }: { ad: Pick<AdSettings, 'text' | 'url'> }) {
-  return <aside aria-label="广告" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-muted/40 px-4 py-3">
-    <Badge tone="warning"><Megaphone />广告</Badge>
-    <p className="min-w-0 flex-1 break-words text-caption text-secondary-foreground">{ad.text}</p>
-    {ad.url && <Button asChild variant="outline" size="sm">
-      <a href={ad.url} target="_blank" rel="noopener noreferrer sponsored">了解更多<ExternalLink /></a>
-    </Button>}
+  const [spot, setSpot] = useState({ x: '50%', y: '50%' });
+  function onPointerMove(event: PointerEvent<HTMLElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setSpot({ x: `${Math.round(event.clientX - rect.left)}px`, y: `${Math.round(event.clientY - rect.top)}px` });
+  }
+  const style = { '--ad-x': spot.x, '--ad-y': spot.y } as CSSProperties;
+  return <aside aria-label="广告" className="ad-banner group" onPointerMove={onPointerMove} style={style}>
+    <div className="ad-banner-inner flex flex-wrap items-center gap-x-3.5 gap-y-2.5 px-4 py-3">
+      <span className="ad-banner-aurora" aria-hidden />
+      <span className="ad-banner-spotlight" aria-hidden />
+      <span className="ad-banner-sheen" aria-hidden />
+      <Badge tone="warning" className="relative z-10 shadow-sm ring-1 ring-warning/30">
+        <span className="size-1.5 rounded-full bg-warning animate-[pulse-dot_1.6s_ease-in-out_infinite]" aria-hidden />
+        <Megaphone aria-hidden />
+        广告
+      </Badge>
+      <p className="relative z-10 flex min-w-0 flex-1 items-start gap-2 break-words text-caption font-medium text-foreground">
+        <Sparkles className="ad-banner-sparkle mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+        <span className="min-w-0 flex-1">{ad.text}</span>
+      </p>
+      {ad.url && <Button asChild size="sm" className="ad-banner-cta relative z-10">
+        <a href={ad.url} target="_blank" rel="noopener noreferrer sponsored">
+          了解更多
+          <ExternalLink className="ad-banner-arrow" aria-hidden />
+        </a>
+      </Button>}
+    </div>
   </aside>;
 }
 
-/** 「AI 接入」页顶部：开启且有文案时才显示。读取失败时静默不显示，不影响页面其他功能。 */
+/** 「AI 接入」「AI 生图」页顶部：开启且有文案时才显示。读取失败时静默不显示，不影响页面其他功能。 */
 export function AdSlot() {
   const ads = useAds();
   if (!ads.data?.enabled || !ads.data.text) return null;
@@ -65,7 +86,7 @@ export function AdSettingsCard() {
     </CardHeader>
     <CardContent className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3.5">
-        <div className="grid gap-0.5"><span className="text-sm font-medium">显示推广位</span><span className="text-caption text-muted-foreground">关闭后「AI 接入」页不再显示广告。</span></div>
+        <div className="grid gap-0.5"><span className="text-sm font-medium">显示推广位</span><span className="text-caption text-muted-foreground">关闭后「AI 接入」与「AI 生图」页不再显示广告。</span></div>
         <Switch checked={draft.enabled} onCheckedChange={enabled => setDraft({ ...draft, enabled })} aria-label="显示推广位" />
       </div>
       <Field label="文案" htmlFor="ad-text" error={issues.text} description={`${draft.text.trim().length} / 300。默认介绍 zelix.asia（API 中转站），可以改成任何你想说的话。`}>

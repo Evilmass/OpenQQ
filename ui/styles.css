@@ -114,3 +114,164 @@
    attribute Blockly uses to hide scrollbars; without this the flyout's scrollbar stays visible after the flyout closes. */
 .blocklySvg [display="none"], .blocklyScrollbarVertical[display="none"], .blocklyScrollbarHorizontal[display="none"] { display: none; }
 .blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv { font-family: var(--font-sans); }
+
+/* Promo ad banner visual effects (light & dark compatible, reduced-motion safe). */
+@property --ad-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes ad-border-spin {
+  to { --ad-angle: 360deg; }
+}
+
+@keyframes ad-sheen-sweep {
+  0%, 58% { transform: translateX(-140%) skewX(-22deg); opacity: 0; }
+  66% { opacity: 1; }
+  88% { transform: translateX(260%) skewX(-22deg); opacity: 0; }
+  100% { transform: translateX(260%) skewX(-22deg); opacity: 0; }
+}
+
+@keyframes ad-aurora-drift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: .55; }
+  50% { transform: translate3d(12%, -6%, 0) scale(1.08); opacity: .85; }
+}
+
+@keyframes ad-sparkle-twinkle {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: .85; }
+  50% { transform: scale(1.18) rotate(12deg); opacity: 1; }
+}
+
+@keyframes ad-cta-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.ad-banner {
+  position: relative;
+  border-radius: 14px;
+  padding: 1.5px;
+  background: conic-gradient(from var(--ad-angle), #6366f1, #a855f7, #f59e0b, #06b6d4, #6366f1);
+  animation: ad-border-spin 6s linear infinite;
+  box-shadow: 0 6px 24px -10px rgb(99 102 241 / .35), 0 0 0 1px rgb(99 102 241 / .12);
+  transition: transform 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
+}
+
+.ad-banner:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 32px -10px rgb(168 85 247 / .48), 0 0 22px -6px rgb(245 158 11 / .28);
+}
+
+.ad-banner-inner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12.5px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgb(99 102 241 / .11), transparent 55%),
+    radial-gradient(100% 140% at 100% 100%, rgb(245 158 11 / .12), transparent 55%),
+    var(--card);
+}
+
+:root[data-theme="dark"] .ad-banner-inner {
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgb(129 140 248 / .18), transparent 58%),
+    radial-gradient(100% 140% at 100% 100%, rgb(251 191 36 / .14), transparent 58%),
+    var(--card);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ad-banner-inner {
+    background:
+      radial-gradient(120% 140% at 0% 0%, rgb(129 140 248 / .18), transparent 58%),
+      radial-gradient(100% 140% at 100% 100%, rgb(251 191 36 / .14), transparent 58%),
+      var(--card);
+  }
+}
+
+.ad-banner-aurora {
+  pointer-events: none;
+  position: absolute;
+  inset: -40% -15%;
+  background:
+    radial-gradient(circle at 22% 50%, rgb(168 85 247 / .18), transparent 36%),
+    radial-gradient(circle at 78% 45%, rgb(6 182 212 / .15), transparent 34%);
+  filter: blur(18px);
+  animation: ad-aurora-drift 7s ease-in-out infinite;
+}
+
+.ad-banner-spotlight {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(240px circle at var(--ad-x, 50%) var(--ad-y, 50%), rgb(255 255 255 / .22), rgb(129 140 248 / .12) 45%, transparent 72%);
+  transition: opacity 220ms ease;
+}
+
+.ad-banner:hover .ad-banner-spotlight {
+  opacity: 1;
+}
+
+.ad-banner-sheen {
+  pointer-events: none;
+  position: absolute;
+  inset: -20% auto -20% 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / .32), transparent);
+  animation: ad-sheen-sweep 4.4s ease-in-out infinite;
+}
+
+:root[data-theme="dark"] .ad-banner-sheen {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / .14), transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ad-banner-sheen {
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / .14), transparent);
+  }
+}
+
+.ad-banner-sparkle {
+  animation: ad-sparkle-twinkle 2.6s ease-in-out infinite;
+}
+
+.ad-banner-cta {
+  position: relative;
+  overflow: hidden;
+  border: none !important;
+  color: #ffffff !important;
+  background: linear-gradient(110deg, #4f46e5, #9333ea, #d97706, #4f46e5);
+  background-size: 240% 240%;
+  animation: ad-cta-flow 5s ease infinite;
+  box-shadow: 0 4px 14px -4px rgb(99 102 241 / .55);
+  transition: transform 180ms var(--ease-out), box-shadow 180ms var(--ease-out), filter 180ms ease;
+}
+
+.ad-banner-cta:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow: 0 8px 20px -4px rgb(147 51 234 / .65);
+}
+
+.ad-banner-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%) skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / .38), transparent);
+  transition: transform 520ms var(--ease-out);
+}
+
+.ad-banner-cta:hover::after {
+  transform: translateX(130%) skewX(-20deg);
+}
+
+.ad-banner-cta:hover .ad-banner-arrow {
+  transform: translate(1.5px, -1.5px);
+}
+
+.ad-banner-arrow {
+  transition: transform 180ms var(--ease-out);
+}

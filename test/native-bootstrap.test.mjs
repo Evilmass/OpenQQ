@@ -45,6 +45,7 @@ const scenarios = [
   ['bad-dll', 1, win ? 'original return' : null],
   ['cancel', 1, win ? 'original return' : null],
   ['exit', 1, null],
+  ...(win ? [['breakpoint', 1, null]] : []),
 ];
 for (const [mode, expectedCode, expectedReturn] of scenarios) {
   test('C++ native bootstrap: ' + mode, { skip: !win && !linux, timeout: 45000 }, async t => {
@@ -71,7 +72,7 @@ for (const [mode, expectedCode, expectedReturn] of scenarios) {
     const code = await new Promise((done, reject) => { child.once('exit', done); child.once('error', reject); });
     assert.equal(code, expectedCode, diagnostics);
     const stages = diagnostics.trim().split('\n').filter(Boolean).map(line => JSON.parse(line.slice('[OpenQQ/native] '.length)));
-    if (mode !== 'cancel' && !(linux && mode === 'bad-dll')) {
+    if (mode !== 'cancel' && mode !== 'breakpoint' && !(linux && mode === 'bad-dll')) {
       assert.ok(stages.some(e => e.stage === 'addon_register' && e.name === 'wrapper' && !e.target), diagnostics);
       assert.ok(stages.some(e => e.stage === 'addon_register' && e.name === 'QQNT' && e.target), diagnostics);
     }
@@ -80,6 +81,20 @@ for (const [mode, expectedCode, expectedReturn] of scenarios) {
       assert.match(readFileSync(output, 'utf8'), /\.startNative\(/);
       assert.match(readFileSync(output, 'utf8'), /fixture-only/);
     } else assert.ok(stages.some(e => e.stage === 'error'), diagnostics);
+    if (mode === 'breakpoint') {
+      assert.ok(stages.some(e => e.stage === 'initial_breakpoint'), diagnostics);
+      const passed = stages.filter(e => e.stage === 'exception_passed');
+      assert.equal(passed.length, 2, diagnostics);
+      assert.match(passed[0].exception, /first-chance/);
+      assert.match(passed[1].exception, /second-chance/);
+      for (const event of passed) {
+        assert.match(event.exception, /thread: \d+/);
+        assert.match(event.exception, /module: .*\\(?:ntdll|kernelbase)\.dll\+0x[0-9A-F]+/i);
+      }
+      const error = stages.find(e => e.stage === 'error').error;
+      assert.match(error, /exit code 0x80000003 breakpoint; stage: waiting for wrapper.node registration/);
+      assert.ok(error.includes(passed[1].exception), diagnostics);
+    }
     if (mode === 'exit') {
       // A crash after detaching still reports the exit code and where the bootstrap was.
       const pattern = win

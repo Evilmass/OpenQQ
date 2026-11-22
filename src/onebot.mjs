@@ -9,7 +9,7 @@ function integer(value, field, min = 0) {
 const id = (value, field) => integer(value, field, 1);
 
 // `idStore` (src/idstore.mjs) keeps the id mapping across restarts; without one the ids start again from 1.
-export function createEventConverter({ mediaUrl, idStore } = {}) {
+export function createEventConverter({ mediaUrl, idStore, reportSelfMessage = false } = {}) {
   const ids = new Map();
   const refs = new Map();
   const seen = new Map();
@@ -81,11 +81,12 @@ export function createEventConverter({ mediaUrl, idStore } = {}) {
         user_id: id(message.poke.userUin, 'user_id'), target_id: id(message.poke.targetUin, 'target_id') };
     } else {
       const senderId = id(message.senderUin, 'user_id');
-      if (senderId === selfId) return null;
+      const isSelf = senderId === selfId;
+      if (isSelf && !reportSelfMessage) return null;
       const segments = message.elements.map(element => convertSegment(element, original => messageRef(selfId, message, original),
         ref => forwardSegment(selfId, ref), mediaUrl));
-      event = { post_type: 'message', message_type: message.chatType === 2 ? 'group' : 'private',
-        sub_type: message.chatType === 2 ? 'normal' : message.chatType === 100 ? 'group' : 'other',
+      event = { post_type: isSelf ? 'message_sent' : 'message', message_type: message.chatType === 2 ? 'group' : 'private',
+        sub_type: message.chatType === 2 ? 'normal' : message.chatType === 100 ? 'group' : message.isFriend ? 'friend' : 'other',
         message_id: messageRef(selfId, message), user_id: senderId, message: segments, raw_message: cqString(segments),
         font: 0, sender: { user_id: senderId, nickname: String(message.sendNickName ?? '') },
       };
@@ -105,17 +106,31 @@ export function createEventConverter({ mediaUrl, idStore } = {}) {
       const event = { ...raw.event };
       const type = event.notice_type ?? event.request_type;
       if (!type) throw new Error('事件缺少类型');
-      if (['group_admin', 'group_increase', 'group_decrease', 'group_ban', 'group_recall', 'group_upload', 'group_card', 'group_name', 'group'].includes(type)) event.group_id = id(event.group_id, 'group_id');
+      if (['group_admin', 'group_increase', 'group_decrease', 'group_ban', 'group_recall', 'group_upload', 'group_card', 'group_name', 'group_msg_emoji_like', 'essence', 'group'].includes(type)
+        || (type === 'notify' && event.group_id !== undefined)) {
+        event.group_id = id(event.group_id, 'group_id');
+      }
       // 0 is valid for whole-group bans and for membership notices whose member could not be resolved (flagged).
-      const unknownMember = event.openqq_user_unknown === true && ['group_increase', 'group_decrease', 'group_admin'].includes(type);
-      if (!['openqq_native', 'openqq_gray_tip', 'bot_offline'].includes(type)) event.user_id = integer(event.user_id, 'user_id', type === 'group_ban' || unknownMember ? 0 : 1);
+      const unknownMember = event.openqq_user_unknown === true && ['group_increase', 'group_decrease', 'group_admin', 'group_msg_emoji_like'].includes(type);
+      if (!['openqq_native', 'openqq_gray_tip', 'bot_offline', 'essence'].includes(type)) event.user_id = integer(event.user_id, 'user_id', type === 'group_ban' || unknownMember ? 0 : 1);
       if ('target_id' in event) event.target_id = id(event.target_id, 'target_id');
       if ('operator_id' in event) event.operator_id = integer(event.operator_id, 'operator_id');
+      if ('sender_id' in event) event.sender_id = integer(event.sender_id, 'sender_id');
       if (['group_increase', 'group_decrease', 'group_ban', 'group_recall'].includes(type) && !('operator_id' in event)) throw new Error('通知缺少 operator_id');
-      const subtypes = { group_admin: ['set', 'unset'], group_increase: ['approve', 'invite'], group_decrease: ['leave', 'kick', 'kick_me'], group_ban: ['ban', 'lift_ban'], group: ['add', 'invite'] };
+      const subtypes = { group_admin: ['set', 'unset'], group_increase: ['approve', 'invite'], group_decrease: ['leave', 'kick', 'kick_me'],
+        group_ban: ['ban', 'lift_ban'], essence: ['add', 'delete'], group: ['add', 'invite'] };
       if (Object.hasOwn(subtypes, type) && !subtypes[type].includes(event.sub_type)) throw new Error('事件 sub_type 无效');
       if (type === 'group_ban') event.duration = integer(event.duration, 'duration', -1);
       if (type === 'group_recall' || type === 'friend_recall') event.message_id = messageRef(selfId, raw.message);
+      if (type === 'group_msg_emoji_like') {
+        if (!Array.isArray(event.likes)) throw new Error('表情回应缺少 likes 列表');
+        event.message_id = raw.message ? messageRef(selfId, raw.message) : integer(event.message_id ?? 0, 'message_id', 0);
+      }
+      if (type === 'essence') {
+        event.sender_id = integer(event.sender_id ?? 0, 'sender_id', 0);
+        event.operator_id = integer(event.operator_id ?? 0, 'operator_id', 0);
+        event.message_id = raw.message ? messageRef(selfId, raw.message) : integer(event.message_id ?? 0, 'message_id', 0);
+      }
       if (type === 'group_upload') {
         if (typeof event.file?.id !== 'string' || !event.file.id || typeof event.file.name !== 'string') throw new Error('群文件标识无效');
         event.file = { ...event.file, size: integer(event.file.size, 'file.size'), busid: integer(event.file.busid, 'file.busid') };
@@ -160,6 +175,19 @@ export function createEventConverter({ mediaUrl, idStore } = {}) {
   convert.forwardResult = (self, forward) => {
     if (!forward?.ref || !Array.isArray(forward.messages)) throw new Error('合并转发回执无效');
     return { messages: forwardNodes(id(self.uin, 'self_id'), forward.ref, forward.messages) };
+  };
+  convert.historyResult = (self, messages) => {
+    if (!Array.isArray(messages)) throw new Error('历史消息回执无效');
+    const list = [];
+    for (const message of messages) {
+      if (!message || ![1, 2, 100].includes(message.chatType) || !Array.isArray(message.elements) || !message.elements.length) continue;
+      try {
+        const entry = convert.messageResult(self, message);
+        if (message.msgSeq !== undefined && /^\d+$/.test(String(message.msgSeq))) entry.message_seq = Number(message.msgSeq);
+        list.push(entry);
+      } catch { /* skip malformed historical records */ }
+    }
+    return { messages: list };
   };
   return convert;
 }

@@ -94,8 +94,11 @@ async function start(qq, config, existingWebUI) {
   const channel = await createNativeChannel();
   let network;
   // message_id values survive a restart: the mapping to QQ's own ids is kept in .runtime/ids.json.
-  const convert = createEventConverter({ mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
-    idStore: createIdStore(join(runtimeDir, 'ids.json')) });
+  const convert = createEventConverter({
+    mediaUrl: (filePath, fileName) => network?.mediaUrl(filePath, fileName) ?? null,
+    idStore: createIdStore(join(runtimeDir, 'ids.json')),
+    reportSelfMessage: config.reportSelfMessage === true,
+  });
   // Sources of image / voice / video / file segments (local path, base64, URL) are fetched into this folder before sending.
   const media = createMediaPreparer({ dir: join(runtimeDir, 'media') });
   media.sweep().catch(() => {});

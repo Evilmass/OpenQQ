@@ -20,13 +20,22 @@ export function convertSegment(element, replyId, forward, mediaUrl) {
     const value = element.textElement;
     if (typeof value?.content !== 'string') throw new Error('文本元素缺少 content');
     const at = Number(value.atType ?? 0);
-    if (at === 0) return { type: 'text', data: { text: value.content } };
+    if (at === 0) {
+      const content = value.content.includes('\n') ? value.content : value.content.replaceAll('\r', '\n');
+      return { type: 'text', data: { text: content } };
+    }
     if (at === 1) return { type: 'at', data: { qq: 'all' } };
     if (at === 2 && numeric(value.atUid) && Number(value.atUid) > 0) return { type: 'at', data: { qq: String(value.atUid) } };
     return fallback();
   }
   if (element.elementType === 6 && numeric(element.faceElement?.faceIndex)) {
-    return { type: 'face', data: { id: String(element.faceElement.faceIndex) } };
+    const fe = element.faceElement;
+    const faceId = Number(fe.faceIndex);
+    const result = fe.resultId !== undefined && fe.resultId !== null && String(fe.resultId) !== '' ? { result: String(fe.resultId) } : {};
+    if (faceId === 358) return { type: 'dice', data: result };
+    if (faceId === 359) return { type: 'rps', data: result };
+    if (Number(fe.faceType) === 5) return { type: 'poke', data: { type: String(fe.pokeType ?? 0), id: String(faceId) } };
+    return { type: 'face', data: { id: String(fe.faceIndex) } };
   }
   const media = { 2: ['image', 'picElement'], 3: ['file', 'fileElement'], 4: ['record', 'pttElement'], 5: ['video', 'videoElement'] }[element.elementType];
   if (media) {
@@ -44,6 +53,10 @@ export function convertSegment(element, replyId, forward, mediaUrl) {
       else if (element.elementType === 2) data.file = localPath;
     }
     if (numeric(value.fileSize)) data.file_size = Number(value.fileSize);
+    if (element.elementType === 2) {
+      if (text(value.summary)) data.summary = value.summary;
+      if (typeof value.picSubType === 'number' && Number.isSafeInteger(value.picSubType)) data.sub_type = value.picSubType;
+    }
     return { type: media[0], data };
   }
   if (element.elementType === 7 && element.replyElement) {

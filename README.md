@@ -14,9 +14,10 @@ Windows x64 与 Linux（x64 / arm64）QQ NT 的 OneBot v11 桥接，同时支持
 
 ## 功能
 
-- OneBot v11：正向 WebSocket 服务端（Bearer Header 或 `access_token` 查询参数鉴权，鉴权失败有限流），反向 WebSocket 客户端（最多 8 个目标，QQ 会话就绪时断线后每 3 秒重连一次）。心跳固定每 15 秒一次，目前不能配置。另有可选的 HTTP 服务（GET / POST 调用动作，支持 `_async`）、HTTP POST 上报（最多 8 个接收端，可用 `X-Signature` 校验）和快速操作（`.handle_quick_operation`），见 [docs/connect.md](docs/connect.md)。
+- OneBot v11：正向 WebSocket 服务端（Bearer Header 或 `access_token` 查询参数鉴权，鉴权失败有限流，支持 `_async`），反向 WebSocket 客户端（最多 8 个目标，可配置 `heartbeatInterval` / `reconnectInterval` / `reportSelfMessage`）。另有可选的 HTTP 服务（GET / POST 调用动作，支持 `_async`）、HTTP POST 上报（最多 8 个接收端，可用 `X-Signature` 校验）和快速操作（`.handle_quick_operation`），见 [docs/connect.md](docs/connect.md)。
 - 启动前检查：Windows 扫描注册表和常见路径找到 QQ NT，解析 `QQNT.dll`、`wrapper.node` 的 x64 PE 导出表；Linux 探测 `/opt/QQ` 等路径并解析 `qq`、`wrapper.node` 的 ELF64 动态符号表，确认 `qq_magic_napi_register` 等 N-API 符号都在。
-- 发送与管理：文本、CQ 码、@、表情、图片、语音、视频、文件、骰子、猜拳、引用回复；撤回、踢人、禁言、全员禁言、管理员、群名片、群名、退群、处理入群/好友申请、点赞，以及群和成员查询。详见 [docs/actions.md](docs/actions.md)。
+- 发送、历史与群管（90+ 动作）：文本、CQ 码、@、表情、图片、语音（含 SILK/WAV/ffmpeg 转码与语音转文字）、视频、文件、骰子、猜拳、戳一戳（`send_poke` / `group_poke` / `friend_poke`）、引用回复、商城表情、Markdown、推荐名片与合并转发收发；历史消息、已读回执、表情回应、精华消息、群公告、群文件管理、群荣誉/禁言/系统消息查询，以及好友分组、个人资料与头像管理。详见 [docs/actions.md](docs/actions.md)。
+- 开发者生态：内置 TypeScript 友好的 ESM SDK（`src/sdk.mjs` + `src/sdk.d.ts`，支持 HTTP/WS 与链式 `MessageBuilder`）、统一动作清单（`src/action-catalog.mjs`）以及带安全策略的 stdio MCP Server（`npm run mcp`）。
 - WebUI：默认只监听 `127.0.0.1`（容器内可通过 `--web-host 0.0.0.0` 配合本机端口映射），每次启动生成临时访问密钥。有配置向导（`/setup`）和控制台：概览（会话、吞吐、连接状态）、按会话收发消息、事件流、OneBot 动作调试、运行日志，以及账号、连接和设置管理。
 - AI 生图：控制台的「AI 生图」页调用 OpenAI 兼容的 `/images/generations` 接口（默认 `api.zelix.asia`，Key 旁有「点击获取 KEY」按钮），预览并下载生成的图片，详见 [docs/bot.md](docs/bot.md)。
 - 图形化 Bot：在 WebUI 里像 Scratch 一样拖积木编制自己的 Bot（触发、条件、变量、发送消息、调用 AI、读写记忆），接入 OpenAI 兼容接口，每个 Bot 有独立的人设和记忆。「AI 接入」页顶部有一条可修改、可关闭的推广位（默认介绍 [zelix.asia](https://zelix.asia)），只显示在界面里，不会发到 QQ。详见 [docs/bot.md](docs/bot.md)。
@@ -93,6 +94,7 @@ npm start -- --qq-root "C:\Program Files\Tencent\QQNT"    # 临时指定 QQ 目�
 | `npm run init` | 在终端里交互生成 `config/openqq.json` |
 | `npm run webui` | 只启动配置向导（预览模式） |
 | `npm start` | 启动 OpenQQ、WebUI 和 OneBot 接入（WebSocket，可选 HTTP），并挂接 QQ |
+| `npm run mcp` | 启动 stdio MCP Server，供 AI 客户端查询与调用 OpenQQ 动作 |
 | `npm run bot` | 运行示例机器人（需要 `ONEBOT_TOKEN`） |
 | `npm run build` | 编译原生组件并打包 WebUI（`start`、`webui`、`test` 会自动执行） |
 | `npm run build:native` | 用本机工具链编译启动器、DLL 和模拟宿主 |

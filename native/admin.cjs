@@ -46,27 +46,30 @@ function validate(request, params) {
     case 'set_friend_add_request': {
       const match = typeof params.flag === 'string' ? FRIEND_REQUEST.exec(params.flag) : null;
       if (!match) throw fail('flag 无效：请使用好友申请事件里的 flag', 1404);
-      return { kind: 'friend_request', uid: match[1], reqTime: match[2], approve: flag(params.approve, 'approve', true) };
+      return { kind: 'friend_request', uid: match[1], reqTime: match[2], approve: flag(params.approve, 'approve', true), remark: text(params.remark, 'remark', 60, '') };
     }
     case 'delete_msg': {
       const ref = messageRef(params.openqq_ref);
       if (!ref) throw fail('message_id 无效或已过期（仅支持本次运行期间收发过的消息）', 1404);
       return { kind: 'delete_msg', ref };
     }
-    case 'set_msg_emoji_like': {
+    case 'set_msg_emoji_like':
+    case 'set_group_reaction': {
       const ref = messageRef(params.openqq_ref);
       if (!ref) throw fail('message_id 无效或已过期（仅支持本次运行期间收发过或被引用的消息）', 1404);
       if (ref.chatType !== 2) throw fail('只有群消息可以添加表情回应');
-      const emoji = typeof params.emoji_id === 'number' ? String(params.emoji_id) : params.emoji_id;
+      const rawEmoji = params.emoji_id ?? params.code;
+      const emoji = typeof rawEmoji === 'number' ? String(rawEmoji) : rawEmoji;
       if (typeof emoji !== 'string' || !/^\d{1,10}$/.test(emoji)) throw fail('emoji_id 必须是表情编号（数字）');
-      return { kind: 'emoji_like', ref, emoji, set: flag(params.set, 'set', true) };
+      const setVal = params.set !== undefined ? params.set : params.is_add;
+      return { kind: 'emoji_like', ref, emoji, set: flag(setVal, 'set', true) };
     }
     case 'send_like': return { kind: 'send_like', user: user(), times: integer(params.times, 'times', 1, 20, 1) };
-    case 'get_friend_list': return { kind: 'friend_list' };
+    case 'get_friend_list': return { kind: 'friend_list', noCache: flag(params.no_cache, 'no_cache', false) };
     case 'get_group_list': return { kind: 'group_list' };
-    case 'get_group_info': return { kind: 'group_info', group: group() };
-    case 'get_group_member_list': return { kind: 'group_member_list', group: group() };
-    case 'get_group_member_info': return { kind: 'group_member_info', group: group(), user: user() };
+    case 'get_group_info': return { kind: 'group_info', group: group(), noCache: flag(params.no_cache, 'no_cache', false) };
+    case 'get_group_member_list': return { kind: 'group_member_list', group: group(), noCache: flag(params.no_cache, 'no_cache', false) };
+    case 'get_group_member_info': return { kind: 'group_member_info', group: group(), user: user(), noCache: flag(params.no_cache, 'no_cache', false) };
     case 'get_stranger_info': return { kind: 'stranger_info', user: user() };
     default: return null;
   }
@@ -98,8 +101,20 @@ function memberOf(group, info) {
 function strangerOf(user, detail) {
   const core = detail?.simpleInfo?.coreInfo ?? {};
   const info = detail?.simpleInfo?.baseInfo ?? {};
+  const ext = detail?.commonExt ?? {};
   const number = value => Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : 0;
-  return { user_id: Number(user), nickname: String(core.nick ?? detail?.nick ?? ''), sex: info.sex === 1 ? 'male' : info.sex === 2 ? 'female' : 'unknown', age: number(info.age) };
+  const result = { user_id: Number(user), nickname: String(core.nick ?? detail?.nick ?? ''), sex: info.sex === 1 ? 'male' : info.sex === 2 ? 'female' : 'unknown', age: number(info.age) };
+  if (typeof info.qid === 'string' && info.qid) result.qid = info.qid;
+  if (typeof info.longNick === 'string' && info.longNick) { result.long_nick = info.longNick; result.sign = info.longNick; }
+  if (Number.isSafeInteger(info.birthday_year) && info.birthday_year > 0) result.birthday_year = info.birthday_year;
+  if (Number.isSafeInteger(info.birthday_month) && info.birthday_month > 0) result.birthday_month = info.birthday_month;
+  if (Number.isSafeInteger(info.birthday_day) && info.birthday_day > 0) result.birthday_day = info.birthday_day;
+  const qql = ext.qqLevel ?? detail?.simpleInfo?.qqLevel;
+  if (qql && typeof qql === 'object') {
+    const level = (Number(qql.crownNum) || 0) * 64 + (Number(qql.sunNum) || 0) * 16 + (Number(qql.moonNum) || 0) * 4 + (Number(qql.starNum) || 0);
+    if (level > 0) result.level = level;
+  }
+  return result;
 }
 
 async function run(action, ctx) {
@@ -148,9 +163,15 @@ async function run(action, ctx) {
       outcome(await groups().operateSysNotify(false, { operateType: action.approve ? 1 : 2,
         targetMsg: { seq: action.seq, type: action.type, groupCode: action.group, postscript: action.reason || ' ' } }), '处理入群申请');
       return null;
-    case 'friend_request':
-      outcome(await session.getBuddyService().approvalFriendRequest({ friendUid: action.uid, reqTime: action.reqTime, accept: action.approve }), '处理好友申请');
+    case 'friend_request': {
+      const buddy = session.getBuddyService();
+      outcome(await buddy.approvalFriendRequest({ friendUid: action.uid, reqTime: action.reqTime, accept: action.approve }), '处理好友申请');
+      if (action.approve && action.remark && typeof buddy.setBuddyRemark === 'function') {
+        ensure();
+        try { await buddy.setBuddyRemark({ uid: action.uid, remark: action.remark }); } catch { /* best effort after approval */ }
+      }
       return null;
+    }
     case 'delete_msg':
       outcome(await session.getMsgService().recallMsg({ chatType: action.ref.chatType, peerUid: action.ref.peerUid, guildId: '0' }, [action.ref.msgId]), '撤回消息');
       return null;
@@ -172,21 +193,21 @@ async function run(action, ctx) {
       outcome(await session.getProfileLikeService().setBuddyProfileLike({ friendUid: uid, sourceId: 71, doLikeCount: action.times, doLikeTollCount: 0 }), '点赞');
       return null;
     }
-    case 'friend_list': return ctx.friendList();
+    case 'friend_list': return ctx.friendList(action.noCache);
     case 'group_list': return (await ctx.groupList(true)).map(groupOf);
     case 'group_info': {
-      const item = (await ctx.groupList(false)).find(value => String(value.groupCode) === action.group);
+      const item = (await ctx.groupList(action.noCache)).find(value => String(value.groupCode) === action.group);
       if (!item) throw fail('没有找到这个群', 1404);
       return groupOf(item);
     }
     case 'group_member_list': {
-      let list = await members(action.group, false);
-      if (!list.length) list = await members(action.group, true);
+      let list = await members(action.group, action.noCache);
+      if (!list.length && !action.noCache) list = await members(action.group, true);
       return list.map(info => memberOf(action.group, info));
     }
     case 'group_member_info': {
-      let info = (await members(action.group, false)).find(value => String(value.uin) === action.user);
-      if (!info) info = (await members(action.group, true)).find(value => String(value.uin) === action.user);
+      let info = (await members(action.group, action.noCache)).find(value => String(value.uin) === action.user);
+      if (!info && !action.noCache) info = (await members(action.group, true)).find(value => String(value.uin) === action.user);
       if (!info) throw fail('没有找到这个群成员', 1404);
       return memberOf(action.group, info);
     }

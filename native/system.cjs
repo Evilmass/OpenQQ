@@ -44,8 +44,39 @@ function readSystemEvent(input) {
   const root = fields(input);
   const head = child(root, 2);
   const type = Number(head.get(1));
+  const subType = Number(head.get(2) ?? 0);
   const content = child(root, 3).get(2);
-  if (!content || ![33, 34, 44].includes(type)) return null;
+  if (!content) return null;
+  if (type === 732 && subType === 16) {
+    if (content.length <= 7) return null;
+    try {
+      const notify = fields(content.subarray(7));
+      if (Number(notify.get(13) ?? 0) !== 35) return null;
+      const groupId = notify.has(4) ? String(notify.get(4)) : '';
+      const inner = child(child(child(notify, 44), 1), 1);
+      const seq = child(inner, 2).get(1);
+      const react = child(inner, 3);
+      const code = text(react.get(1));
+      const count = Number(react.get(3) ?? 1n);
+      const operatorUid = text(react.get(4));
+      const reactType = Number(react.get(5) ?? 0n);
+      if (!groupId || !/^[1-9]\d*$/.test(groupId) || !seq || !code || (!/^u_[\w-]+$/.test(operatorUid) && !/^[1-9]\d*$/.test(operatorUid))) return null;
+      return {
+        event: {
+          notice_type: 'group_msg_emoji_like',
+          group_id: groupId,
+          user_uid: operatorUid,
+          msg_seq: String(seq),
+          emoji_id: code,
+          count: Number.isSafeInteger(count) && count > 0 ? count : 1,
+          is_add: reactType === 1,
+        },
+        time: head.has(6) ? Number(head.get(6)) : Math.floor(Date.now() / 1000),
+        key: `system:${createHash('sha256').update(Buffer.from(input)).digest('hex')}`,
+      };
+    } catch { return null; }
+  }
+  if (![33, 34, 44].includes(type)) return null;
   const body = fields(content);
   let event;
   if (type === 44) {
