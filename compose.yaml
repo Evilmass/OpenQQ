@@ -11,10 +11,10 @@ services:
     shm_size: "512m"
     ports:
       # Bound to 127.0.0.1 by default for security; use an SSH tunnel or reverse proxy for remote access.
-      - "127.0.0.1:17860:17860" # WebUI setup & console
-      - "127.0.0.1:3001:3001"   # OneBot v11 forward WebSocket
-      # - "127.0.0.1:5700:5700" # OneBot v11 HTTP API (turn it on in the WebUI Connections page first)
-      - "127.0.0.1:6080:6080"   # noVNC screen for first-time QQ login / captcha
+      - "17860:17860" # WebUI setup & console
+      - "3001:3001"   # OneBot v11 forward WebSocket
+      # - "5700:5700" # OneBot v11 HTTP API (turn it on in the WebUI Connections page first)
+      - "6080:6080"   # noVNC screen for first-time QQ login / captcha
     volumes:
       - ./docker-data/config:/app/config
       - ./docker-data/data:/app/data      # Bot programs, memories and the AI API key
@@ -22,8 +22,9 @@ services:
     environment:
       TZ: Asia/Shanghai
       OPENQQ_WEB_HOST: "0.0.0.0"
-      # Optional: keep the WebUI token across restarts (16..256 non-space ASCII characters).
-      # OPENQQ_WEB_TOKEN: "${OPENQQ_WEB_TOKEN}"
+      OPENQQ_WEB_ALLOW_HOSTS: ${OPENQQ_WEB_ALLOW_HOSTS}
+      OPENQQ_MEDIA_ALLOW_PRIVATE: ${OPENQQ_MEDIA_ALLOW_PRIVATE}
+      OPENQQ_WEB_TOKEN: ${OPENQQ_WEB_TOKEN}
       OPENQQ_VNC: "1"
       # Optional: auto-create config/openqq.json on first boot instead of using the WebUI setup wizard.
       # OPENQQ_AUTO_INIT: "1"

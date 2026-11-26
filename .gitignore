@@ -23,7 +23,6 @@ data/
 config/openqq.json
 config/*.tmp
 .env
-.env.*
 
 # Editors and OS
 .vscode/
