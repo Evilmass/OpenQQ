@@ -22,6 +22,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       OPENQQ_WEB_HOST: "0.0.0.0"
+      # Optional: keep the WebUI token across restarts (16..256 non-space ASCII characters).
+      # OPENQQ_WEB_TOKEN: "${OPENQQ_WEB_TOKEN}"
       OPENQQ_VNC: "1"
       # Optional: auto-create config/openqq.json on first boot instead of using the WebUI setup wizard.
       # OPENQQ_AUTO_INIT: "1"

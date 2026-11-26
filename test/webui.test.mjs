@@ -30,6 +30,37 @@ async function stream(t, web, headers) {
   };
 }
 
+test('WebUI generates a fresh token on each start by default', async t => {
+  const first = await fixture(t);
+  const firstToken = first.headers.Authorization.slice(7);
+  assert.match(firstToken, /^[a-f0-9]{64}$/);
+  await first.web.close();
+  const second = await fixture(t);
+  assert.notEqual(second.headers.Authorization, first.headers.Authorization);
+  assert.equal((await fetch(second.web.origin + '/api/metrics', { headers: first.headers })).status, 401);
+  assert.equal((await fetch(second.web.origin + '/api/metrics', { headers: second.headers })).status, 200);
+});
+
+test('WebUI keeps a configured token valid after restart and encodes it in the access URL', async t => {
+  const token = 'fixed-webui-token+&#%=?' + '&+%=#?';
+  const first = await fixture(t, { token });
+  assert.ok(first.web.url.includes('%26%2B%25%3D%23%3F'));
+  assert.equal(first.headers.Authorization, 'Bearer ' + token);
+  assert.equal((await fetch(first.web.origin + '/api/metrics', { headers: first.headers })).status, 200);
+  assert.equal((await (await fetch(first.web.origin + '/')).text()).includes(token), false);
+  await first.web.close();
+  const second = await fixture(t, { token });
+  assert.equal(second.headers.Authorization, first.headers.Authorization);
+  assert.equal((await fetch(second.web.origin + '/api/metrics', { headers: first.headers })).status, 200);
+  assert.equal((await fetch(second.web.origin + '/api/metrics', { headers: { Authorization: 'Bearer wrong' } })).status, 401);
+});
+
+test('WebUI rejects invalid configured tokens before starting', async () => {
+  for (const token of ['', 'short', 'x'.repeat(257), 'contains spaces in token', 'newline-in-token\n', '中文令牌'.repeat(8), null, 123]) {
+    await assert.rejects(startWebUI({ port: 0, token }), /OPENQQ_WEB_TOKEN/);
+  }
+});
+
 test('WebUI serves local assets with restrictive headers and never embeds its access token', async t => {
   const { web, headers } = await fixture(t);
   for (const path of ['/', '/app.js', '/styles.css']) {

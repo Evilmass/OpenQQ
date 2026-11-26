@@ -69,10 +69,10 @@ function createMetrics() {
   };
 }
 
-export async function startWebUI({ port = 17860, host = '127.0.0.1', allowedHosts = [], status = { phase: 'detached' }, dispatch, configuration, bot } = {}) {
+export async function startWebUI({ port = 17860, host = '127.0.0.1', allowedHosts = [], token = randomBytes(32).toString('hex'), status = { phase: 'detached' }, dispatch, configuration, bot } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('WebUI 端口必须为 0..65535 的整数');
   if (!['127.0.0.1', '0.0.0.0'].includes(host)) throw new Error('WebUI 监听地址仅支持 127.0.0.1 或 0.0.0.0');
-  const token = randomBytes(32).toString('hex');
+  if (typeof token !== 'string' || !/^[\x21-\x7e]{16,256}$/.test(token)) throw new Error('WebUI 令牌（OPENQQ_WEB_TOKEN）需要 16..256 位非空格 ASCII 字符');
   const clients = new Set();
   const history = [];
   const counts = { events: 0, actions: 0, errors: 0 };
@@ -239,7 +239,7 @@ export async function startWebUI({ port = 17860, host = '127.0.0.1', allowedHost
   }, 15000);
   heartbeat.unref();
   return {
-    origin, url: origin + '/#token=' + token,
+    origin, url: origin + '/#token=' + encodeURIComponent(token),
     setDispatch(value) { dispatch = value; },
     setStatus(value) {
       state = { ...value };

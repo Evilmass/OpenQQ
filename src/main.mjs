@@ -257,7 +257,8 @@ const webAllowedHosts = (process.env.OPENQQ_WEB_ALLOW_HOSTS ?? '').split(',').ma
 async function configurationWebUI(config, running = false) {
   webRunning = running;
   let webui;
-  webui = await startWebUI({ port: Number(values['web-port'] ?? config.webPort), host: webHost, allowedHosts: webAllowedHosts, bot: botApi,
+  webui = await startWebUI({ port: Number(values['web-port'] ?? config.webPort), host: webHost, allowedHosts: webAllowedHosts,
+    token: process.env.OPENQQ_WEB_TOKEN || undefined, bot: botApi,
     status: { phase: savedConfig ? 'detached' : 'setup' }, configuration: {
     get: () => {
       const currentConfig = savedConfig ?? config;

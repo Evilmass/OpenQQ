@@ -65,6 +65,25 @@ docker compose logs -f
 图形化 Bot 的积木程序、记忆和 AI 设置（含 API Key）保存在容器里的 `/app/data`，`compose.yaml` 已把它挂载到 `./docker-data/data`；请不要删除这个目录，也不要把它提交或分享。详见 [bot.md](bot.md)。
 3. **关闭 VNC（可选）**：完成登录并启用自动登录后，可在 `compose.yaml` 中设置 `OPENQQ_VNC: "0"` 后重建容器，减少后台进程占用。
 
+### 固定 WebUI token
+
+WebUI 默认每次启动都会生成新的访问令牌。要在容器重启或重建后继续使用同一个 token，在 `compose.yaml` 的 `environment` 中添加：
+
+```yaml
+environment:
+  OPENQQ_WEB_TOKEN: "${OPENQQ_WEB_TOKEN}"
+```
+
+在 `compose.yaml` 同目录的 `.env` 文件中设置 `OPENQQ_WEB_TOKEN=<你的固定令牌>`。令牌需要 16..256 个非空格 ASCII 字符，建议用以下命令生成随机令牌并保存到 `.env`：
+
+```bash
+node -e "console.log('OPENQQ_WEB_TOKEN=' + require('node:crypto').randomBytes(32).toString('hex'))" >> .env
+```
+
+更新配置后执行 `docker compose up -d --build`，让配置生效。首次使用时从日志中复制完整 WebUI 地址；之后只要 `OPENQQ_WEB_TOKEN` 不变，该 token 就持续有效。未设置或设为空时仍会每次启动随机生成。
+
+`OPENQQ_ACCESS_TOKEN` 用于 OneBot 接入，`OPENQQ_WEB_ALLOW_HOSTS` 用于允许额外的访问域名；WebUI token 由 `OPENQQ_WEB_TOKEN` 单独设置。
+
 ### 自动初始化配置（无交互启动）
 
 如果希望容器首次启动时自动生成配置并直接拉起 QQ，可以在 `compose.yaml` 中配置环境变量：
@@ -104,6 +123,7 @@ docker run --rm -v /opt/QQ:/opt/QQ:ro openqq:noqq doctor
 | `OPENQQ_QQ_ROOT` | `/opt/QQ` | 容器内 QQ 安装目录 |
 | `OPENQQ_WEB_PORT` | `17860` | WebUI 端口 |
 | `OPENQQ_WEB_HOST` | `0.0.0.0` | WebUI 容器内监听地址（宿主机侧建议仅映射 `127.0.0.1`） |
+| `OPENQQ_WEB_TOKEN` | 每次启动随机生成 | 固定 WebUI 访问令牌，需 16..256 个非空格 ASCII 字符；空值使用随机令牌 |
 | `OPENQQ_WEB_ALLOW_HOSTS` | 空 | 逗号分隔的额外允许 `Host` 头（仅在远程反代/隧道访问 WebUI 时填写） |
 | `OPENQQ_VNC` | `1` | 是否启动 `fluxbox` + `x11vnc` + `noVNC` |
 | `OPENQQ_VNC_PASSWORD` | 空 | 为 VNC 设置访问密码（推荐对外暴露时配置） |
